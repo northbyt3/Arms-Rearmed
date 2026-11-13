@@ -20,6 +20,7 @@
 #include <openxr/openxr_platform.h>
 
 #include "../../rt.h"
+#include "vr_gesture.h"
 
 _Atomic uint64_t g_vr_buttons;   // Switch button bits (input.c's BTN_*)
 _Atomic int32_t g_vr_stick[4];   // left x, y, right x, y (-32767..32767, y up)
@@ -156,7 +157,7 @@ XrVector3f g_vr_hand_vel[2], g_vr_hand_angvel[2];
 _Atomic int g_vr_hand_ok[2];
 
 // (render thread, each frame after xrWaitFrame)
-void vr_input_sync(XrSession xs, XrSpace local, XrTime t) {
+void vr_input_sync(XrSession xs, XrSpace local, XrTime t, const XrPosef *head) {
     if (!attached) return;
     XrActiveActionSet as = {set, XR_NULL_PATH};
     XrActionsSyncInfo si = {XR_TYPE_ACTIONS_SYNC_INFO};
@@ -184,19 +185,57 @@ void vr_input_sync(XrSession xs, XrSpace local, XrTime t) {
     if (get_b(xs, A_MENU)) b |= 1ull << BTN_PLUS;
     XrVector2f l = get_v(xs, A_STICK_L), r = get_v(xs, A_STICK_R);
     g_vr_stick[0] = axis(l.x), g_vr_stick[1] = axis(l.y), g_vr_stick[2] = axis(r.x), g_vr_stick[3] = axis(r.y);
-    g_vr_buttons = b;
     g_vr_input_live = 1;
+    bool ok[2];
+    float hp[2][3], hv[2][3];
     for (int h = 0; h < 2; h++) {
         XrSpaceVelocity v = {XR_TYPE_SPACE_VELOCITY};
         XrSpaceLocation loc = {XR_TYPE_SPACE_LOCATION, &v};
-        if (pLocateSpace(pose_space[h], local, t, &loc) == XR_SUCCESS &&
-            (loc.locationFlags & (XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT))) {
+        ok[h] = pLocateSpace(pose_space[h], local, t, &loc) == XR_SUCCESS &&
+                (loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) && (v.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT);
+        if (ok[h]) {
             g_vr_hand_pose[h] = loc.pose;
             g_vr_hand_vel[h] = v.linearVelocity;
             g_vr_hand_angvel[h] = v.angularVelocity;
-            g_vr_hand_ok[h] = 1;
-        } else g_vr_hand_ok[h] = 0;
+        }
+        g_vr_hand_ok[h] = ok[h];
+        hp[h][0] = loc.pose.position.x, hp[h][1] = loc.pose.position.y, hp[h][2] = loc.pose.position.z;
+        hv[h][0] = v.linearVelocity.x, hv[h][1] = v.linearVelocity.y, hv[h][2] = v.linearVelocity.z;
     }
+    {   // punches and guards from the controllers' motion, in fights (vr_gesture.c). LARECOMP_VR_MOTION=0: off
+        static int on = -1;
+        static VrGesture g;
+        static XrTime last;
+        if (on < 0) {
+            const char *e = getenv("LARECOMP_VR_MOTION");
+            on = !e || atoi(e) != 0;
+            vr_gesture_init(&g);
+            if (on) LOG("[vr] motion punches on: punch forward faster than %.1f m/s, fists up at the face to guard\n", g.punch_speed);
+        }
+        extern bool vr_immersive(void);
+        float dt = last && t > last ? (float)((t - last) / 1e9) : 1 / 60.0f;
+        if (dt > 0.1f) dt = 0.1f;
+        last = t;
+        if (on && head && vr_immersive()) {
+            float h_p[3] = {head->position.x, head->position.y, head->position.z};
+            float h_q[4] = {head->orientation.x, head->orientation.y, head->orientation.z, head->orientation.w};
+            unsigned m = vr_gesture_step(&g, dt, (const float (*)[3])hp, (const float (*)[3])hv, ok, h_p, h_q);
+            if (m & VRG_PUNCH_LEFT) b |= 1ull << BTN_B;
+            if (m & VRG_PUNCH_RIGHT) b |= 1ull << BTN_A;
+            if (m & VRG_GUARD) b |= 1ull << BTN_LSTICK;
+            static unsigned prev[2], nlog;
+            for (int h = 0; h < 2; h++) {
+                if (g.punches[h] < prev[h]) prev[h] = 0;  // (reset since)
+                if (g.punches[h] > prev[h] && nlog++ < 40) LOG("[vr] %s punch\n", h ? "right" : "left");
+                prev[h] = g.punches[h];
+            }
+        } else if (on) {
+            float sp = g.punch_speed;
+            vr_gesture_init(&g);  // (out of fights: nothing half-done carries over)
+            g.punch_speed = sp;
+        }
+    }
+    g_vr_buttons = b;
     {   // the game's rumble on the controllers (amplitude of its low / high bands: the stronger one)
         extern float vr_rumble_amp(int side);
         static float last[2];

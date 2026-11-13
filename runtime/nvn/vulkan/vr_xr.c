@@ -481,8 +481,12 @@ void vr_xr_frame_next(void) {
     if (XR_OK(pxrLocateViews(xs, &li, &vs, 2, &nv, cur.view)) && nv == 2 &&
         (vs.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT))
         cur.views_ok = true;
-    extern void vr_input_sync(XrSession, XrSpace, XrTime);
-    vr_input_sync(xs, space_local, fs.predictedDisplayTime);
+    extern void vr_input_sync(XrSession, XrSpace, XrTime, const XrPosef *head);
+    XrPosef head = cur.view[0].pose;  // (the head: between the eyes)
+    head.position.x = (cur.view[0].pose.position.x + cur.view[1].pose.position.x) * 0.5f;
+    head.position.y = (cur.view[0].pose.position.y + cur.view[1].pose.position.y) * 0.5f;
+    head.position.z = (cur.view[0].pose.position.z + cur.view[1].pose.position.z) * 0.5f;
+    vr_input_sync(xs, space_local, fs.predictedDisplayTime, cur.views_ok ? &head : NULL);
 }
 
 // The eye's pose (LOCAL space: x right, y up, z back, meters; the head's place at the recenter is the origin) and its
