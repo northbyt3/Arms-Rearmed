@@ -6010,6 +6010,30 @@ static void prog_wait(Prog *pr) {
     while (atomic_load(&pr->state) == 0 && SDL_GetTicksNS() - t0 < PROG_WAIT_MS * 1000000ull) SDL_DelayNS(100000);
 }
 
+// (VR) the draw's vertex shader reads a copy of the scene camera's matrices (vr.c vr_effect_block_row): it places what
+// it draws in the world (the opponent's life bar and name, damage numbers). ARMS's UI hands its blocks with the camera
+// in them to flat HUD pieces too - those read only the rows before it. The row per block is remembered for the
+// submission.
+static bool vr_draw_world_ui(const ShaderInfo *vi) {
+    static struct { uint64_t addr, seq; int row; } m[128];
+    uint64_t seq = vk_pending_seq();
+    for (int i = 0; i < 15; i++) {
+        uint32_t k = (uint32_t)i + 3;  // (cbuf_base: game slot i is hardware cbuf i + 3)
+        if (!(vi->cbuf_mask >> k & 1)) continue;
+        Range r = st.ubuf[0][i];
+        if (!r.addr || r.size < 64) continue;
+        uint32_t h = (uint32_t)((r.addr >> 4) ^ (r.addr >> 13)) & 127;
+        if (m[h].addr != r.addr || m[h].seq != seq) {
+            m[h].addr = r.addr, m[h].seq = seq;
+            m[h].row = vr_effect_block_row((const float *)(uintptr_t)r.addr, r.size < 0x800 ? r.size : 0x800);
+        }
+        if (m[h].row < 0) continue;
+        uint64_t used = (vi->cbuf_dynamic >> k & 1) ? r.size : vi->cbuf_size[k];
+        if (used > (uint64_t)m[h].row * 16) return true;
+    }
+    return false;
+}
+
 static void draw_(CmdRec *r, bool indexed) {
     if (prof) prof_tp_ = SDL_GetTicksNS();
     if (!st.program) { SKIP(SK_NO_PROGRAM); return; }
@@ -6034,7 +6058,10 @@ static void draw_(CmdRec *r, bool indexed) {
         bool stereo = cam || seen || tgt, hud = false;
         // the HUD (vr.c): drawn apart, over black in the left eye's pass and over white in the right one's
         if (cam && !g_vr_eye) for (int i = 0; i < st.rt.ncolor; i++) vr_note_scene_target(st.rt.color[i]);
-        if (!cam && tgt && st.rt.ncolor == 1 && !st.rt.depth && (!seen || vr_hud_active(st.rt.color[0])) &&
+        // (a HUD piece drawn with copies of the camera's matrices is anchored in the world - the opponent's life bar
+        // and name, damage numbers: drawn into each eye in 3D, where it belongs, not onto the flat panel)
+        bool world_ui = !cam && tgt && st.rt.ncolor == 1 && !st.rt.depth && vr_draw_world_ui(pr->vi);
+        if (!cam && !world_ui && tgt && st.rt.ncolor == 1 && !st.rt.depth && (!seen || vr_hud_active(st.rt.color[0])) &&
             vr_hud_wanted(st.rt.color[0])) {
             if (vr_hud_begin(st.rt.color[0])) st.rt_dirty = true;
             stereo = false, hud = true;  // (its target is the HUD image now: never made stereo)

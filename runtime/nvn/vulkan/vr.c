@@ -217,6 +217,21 @@ bool vr_effect_block_has(const float *u, uint64_t bytes) {
     }
     return f > 0;
 }
+// The first row of a matrix copy of the scene camera in the block (view-projection, view, projection, inverse view or
+// their rotations), -1: none. (A shader reading the block below that row doesn't use the camera: a flat HUD piece.)
+int vr_effect_block_row(const float *u, uint64_t bytes) {
+    if (!cam_have[0] && !cam_have[1]) return -1;
+    float tmp[128][4];
+    int n = (int)(bytes / 16) < 128 ? (int)(bytes / 16) : 128;
+    memcpy(tmp, u, (size_t)n * 16);
+    const float (*o)[4] = (const float (*)[4])cam_orig;
+    for (int r = 0; r + 3 <= n; r++)
+        if (rows_eq((const float (*)[4])(tmp + r), o + 3, 3, 4) || rows_eq((const float (*)[4])(tmp + r), o + 7, 3, 4) ||
+            rows_eq((const float (*)[4])(tmp + r), o + 0, 3, 3) || rows_eq((const float (*)[4])(tmp + r), o + 11, 3, 3))
+            return r;
+    return -1;
+}
+
 void vr_patch_effect(float *u, uint64_t bytes, int eye) { effect_scan((float (*)[4])u, (int)(bytes / 16), eye, true); }
 
 void vr_patch_camera(float *u, uint64_t size, int eye) {

@@ -36,6 +36,7 @@ bool vr_is_scene_camera(const void *u, uint64_t size);
 void vr_cam_record(const float *orig, const float *patched, size_t bytes, int eye);  // (exec.c) this eye's camera
 bool vr_effect_block_has(const float *u, uint64_t bytes);  // another block holds copies of its matrices (effects)
 void vr_patch_effect(float *u, uint64_t bytes, int eye);   // those copies -> the eye's
+int vr_effect_block_row(const float *u, uint64_t bytes);   // the first row of such a matrix copy, -1: none
 void vr_patch_camera(float *u, uint64_t size, int eye);
 
 // settings (LARECOMP_VR_* and the VR tab)
