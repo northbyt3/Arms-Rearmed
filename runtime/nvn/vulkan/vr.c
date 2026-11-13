@@ -260,6 +260,22 @@ bool vr_effect_block_has(const float *u, uint64_t bytes) {
     }
     return f > 0;
 }
+// Which copies of the scene camera's matrices the block holds within its first `used` bytes (what a shader reads):
+// bits VRK_VP, VRK_P, VRK_V (view, inverse view or a rotation)
+int vr_effect_block_kinds(const float *u, uint64_t bytes, uint64_t used) {
+    if (!cam_have[0] && !cam_have[1]) return 0;
+    float tmp[128][4];
+    int n = (int)(bytes / 16) < 128 ? (int)(bytes / 16) : 128, k = 0;
+    memcpy(tmp, u, (size_t)n * 16);
+    const float (*o)[4] = (const float (*)[4])cam_orig;
+    for (int r = 0; r + 3 <= n && (uint64_t)r * 16 < used; r++) {
+        if (rows_eq((const float (*)[4])(tmp + r), o + 3, 3, 4)) k |= VRK_VP;
+        else if (rows_eq((const float (*)[4])(tmp + r), o + 7, 3, 4)) k |= VRK_P;
+        else if (rows_eq((const float (*)[4])(tmp + r), o + 0, 3, 3) || rows_eq((const float (*)[4])(tmp + r), o + 11, 3, 3)) k |= VRK_V;
+    }
+    return k;
+}
+
 // The first row of a matrix copy of the scene camera in the block (view-projection, view, projection, inverse view or
 // their rotations), -1: none. (A shader reading the block below that row doesn't use the camera: a flat HUD piece.)
 int vr_effect_block_row(const float *u, uint64_t bytes) {

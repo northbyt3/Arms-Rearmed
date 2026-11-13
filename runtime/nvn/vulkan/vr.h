@@ -37,6 +37,9 @@ void vr_cam_record(const float *orig, const float *patched, size_t bytes, int ey
 bool vr_effect_block_has(const float *u, uint64_t bytes);  // another block holds copies of its matrices (effects)
 void vr_patch_effect(float *u, uint64_t bytes, int eye);   // those copies -> the eye's
 int vr_effect_block_row(const float *u, uint64_t bytes);   // the first row of such a matrix copy, -1: none
+enum { VRK_VP = 1, VRK_P = 2, VRK_V = 4 };
+int vr_effect_block_kinds(const float *u, uint64_t bytes, uint64_t used);  // the copies within `used` bytes (VRK_*)
+extern bool g_vr_hud_draw;  // (exec.c) the draw being made goes to the HUD: the camera copies stay the game's
 void vr_patch_camera(float *u, uint64_t size, int eye);
 
 // settings (LARECOMP_VR_* and the VR tab)

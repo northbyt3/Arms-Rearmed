@@ -3682,7 +3682,7 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
             memo.addr = r.addr, memo.n = n, memo.seq = seq, memo.eye = g_vr_eye, memo.gen = vr_view_gen(), memo.s = s;
             return ubo_span(s, size);
         }
-    } else if (vr_on() && r.size >= 64 && vr_stereo_frame()) {
+    } else if (vr_on() && r.size >= 64 && vr_stereo_frame() && !g_vr_hud_draw) {
         // (VR, vr.c) other blocks holding copies of the scene camera's matrices (the effect system's view block: hit
         // sparks, shockwaves, confetti): this eye's copy. A block without any is remembered per submission.
         static struct { uint64_t addr, seq; int eye; uint32_t gen; bool has; VkSpan s; uint64_t n; } ec[64];
@@ -6010,12 +6010,15 @@ static void prog_wait(Prog *pr) {
     while (atomic_load(&pr->state) == 0 && SDL_GetTicksNS() - t0 < PROG_WAIT_MS * 1000000ull) SDL_DelayNS(100000);
 }
 
-// (VR) the draw's vertex shader reads a copy of the scene camera's matrices (vr.c vr_effect_block_row): it places what
-// it draws in the world (the opponent's life bar and name, damage numbers). ARMS's UI hands its blocks with the camera
-// in them to flat HUD pieces too - those read only the rows before it. The row per block is remembered for the
-// submission.
+// (VR) the draw's vertex shader reads a copy of the scene camera's view or view-projection, and no projection of its
+// own (vr.c vr_effect_block_kinds): it places what it draws in the world (damage numbers) - drawn into each eye in 3D.
+// ARMS's UI hands its blocks with the camera in them to flat HUD pieces too (those read only the rows before it), and
+// pieces that read the projection too size themselves in screen units (the opponent's life bar: above them on the
+// TV, far off with an eye's field of view) - both stay on the HUD panel, drawn with the game's camera.
+bool g_vr_hud_draw;
 static bool vr_draw_world_ui(const ShaderInfo *vi) {
     static struct { uint64_t addr, seq; int row; } m[128];
+    int kinds = 0;
     uint64_t seq = vk_pending_seq();
     for (int i = 0; i < 15; i++) {
         uint32_t k = (uint32_t)i + 3;  // (cbuf_base: game slot i is hardware cbuf i + 3)
@@ -6029,9 +6032,10 @@ static bool vr_draw_world_ui(const ShaderInfo *vi) {
         }
         if (m[h].row < 0) continue;
         uint64_t used = (vi->cbuf_dynamic >> k & 1) ? r.size : vi->cbuf_size[k];
-        if (used > (uint64_t)m[h].row * 16) return true;
+        if (used > (uint64_t)m[h].row * 16)
+            kinds |= vr_effect_block_kinds((const float *)(uintptr_t)r.addr, r.size < 0x800 ? r.size : 0x800, used);
     }
-    return false;
+    return (kinds & (VRK_VP | VRK_V)) && !(kinds & VRK_P);
 }
 
 static void draw_(CmdRec *r, bool indexed) {
@@ -6066,6 +6070,7 @@ static void draw_(CmdRec *r, bool indexed) {
             if (vr_hud_begin(st.rt.color[0])) st.rt_dirty = true;
             stereo = false, hud = true;  // (its target is the HUD image now: never made stereo)
         } else if (vr_hud_end()) st.rt_dirty = true;
+        g_vr_hud_draw = hud;  // (cbuf_info: its camera copies stay the game's - both HUD renders alike)
         {   // LARECOMP_VR_DRAWLOG=<present>: each draw's VR kind that frame
             static long at = -2;
             if (at == -2) at = getenv("LARECOMP_VR_DRAWLOG") ? atol(getenv("LARECOMP_VR_DRAWLOG")) : -1;
@@ -6075,6 +6080,9 @@ static void draw_(CmdRec *r, bool indexed) {
                     g_vr_eye, cam, seen, tgt, hud, c0 ? c0->width : 0, c0 ? c0->height : 0, c0 ? c0->format : 0, st.rt.ncolor,
                     st.rt.depth != NULL, pr->fi->ntex, st.blend[0][0], st.blend[0][1], st.blend[0][2], st.blend[0][3], st.blend[0][4],
                     st.blend[0][5], st.blend[0][6], st.blend[0][7], st.color_state[0]);
+                LOG("[vrdraw]   count %llu vp %.0f %.0f %.0f %.0f fs %016llx vs %016llx\n", (unsigned long long)r->x[2],
+                    st.viewport[0][0], st.viewport[0][1], st.viewport[0][2], st.viewport[0][3],
+                    (unsigned long long)pr->code[1], (unsigned long long)pr->code[0]);
             }
         }
         if (!stereo && !hud && g_vr_eye) return;  // (mono: drawn once, in the left eye's pass - the shadow maps)
