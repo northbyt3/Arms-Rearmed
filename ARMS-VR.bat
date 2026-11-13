@@ -43,8 +43,10 @@ rem set LARECOMP_VR_HUD_WIDTH=2.0
 rem set LARECOMP_VR_HUD_PANEL=1
 rem Headset refresh rate to ask for (72, 80, 90, 120; default: as set in the Quest's Link settings)
 rem set LARECOMP_VR_HZ=120
-rem Motion controls: punch with the Touch controllers (experimental, see docs\vr-report.md)
+rem Motion punches in fights (on by default): punch forward with a controller to throw that arm, fists up at the
+rem face to guard. 0 turns them off (the triggers still punch). Punch speed needed, m/s (default 1.6).
 rem set LARECOMP_VR_MOTION=1
+rem set LARECOMP_VR_PUNCH_SPEED=1.6
 
 start "" "build\armsrecomp.exe"
 endlocal

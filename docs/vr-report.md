@@ -27,6 +27,10 @@ its settings and its save are untouched.
    | A / B / X / Y | A / B / X / Y | menus |
    | ☰ (left menu button) | + | pause |
 
+   **Motion punches (fights only)**: throw a real punch with a controller (forward, faster than ~1.6 m/s) and that
+   arm punches; both at once = grab; hold both fists up in front of your face = guard. The triggers still work at
+   the same time. Tune with `LARECOMP_VR_PUNCH_SPEED` or turn off with `LARECOMP_VR_MOTION=0` (in `ARMS-VR.bat`).
+
    A keyboard / gamepad still works too. The game's rumble goes to the Touch controllers.
 
 **Recenter**: hold the Oculus button on the right controller (the standard Quest recenter) while looking forward.
@@ -56,7 +60,8 @@ I could not wear the headset, so everything below was verified with:
 | HUD on its own panel in fights (not smeared across your view) | ✅ with correct transparency |
 | Touch controllers as the pad, rumble on the controllers | ✅ bindings accepted by the simulator; feel untested |
 | 60 fps at 2x internal res, both eyes | ✅ GPU 3.3 ms/frame (GTX 1080 Ti) |
-| Motion controls (punching with the controllers) | 🚧 see "Next" |
+| Motion punches / guard (controller motion → the game's punch / guard buttons) | ✅ unit-tested (`vr/vr_gesture_test.c`, 15 cases), no false punches with idle controllers in the simulator; feel untested |
+| True Joy-Con motion mode (IMU emulation: curving by tilting, etc.) | ❌ not done, see below |
 
 ## How it works (short)
 
@@ -110,6 +115,15 @@ I could not wear the headset, so everything below was verified with:
   makes the timing even (60 × 2) if your Link settings allow 120 Hz.
 - The desktop window mirrors the left eye (without the HUD in fights).
 
+## Why punches are gestures and not Joy-Con emulation
+
+ARMS's own motion mode needs dual Joy-Cons with IMU data (`GetSixAxisSensorStates`: acceleration, angular
+velocity, orientation in Joy-Con axes held in the thumbs-up grip). Emulating that from Touch poses is possible
+(the game imports the six-axis functions; they can be replaced like `GetNpadStates`), but getting the axes and
+units right needs trial with the controllers in hand, and a wrong guess makes the game unplayable. Gestures that
+press the game's own buttons are robust and testable offline, so the first version uses them; curving is the
+left stick, as in the button scheme. Joy-Con emulation is a good next experiment once you can try things.
+
 ## Building
 
 ```
@@ -136,3 +150,4 @@ Diagnostics: `LARECOMP_VR_CAMLOG=1` (scene cameras per frame), `LARECOMP_VR_DRAW
 - Frame classification (fight / big screen); HUD panel with exact alpha; Touch input + rumble.
 - Performance fix (write-combined memory reads): immersive 18 → 60 fps.
 - Launcher `ARMS-VR.bat`, VR settings template.
+- Motion punches / guard gestures (unit-tested); simulator re-run: no false punches, 60 fps.
