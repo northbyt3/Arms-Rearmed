@@ -6016,7 +6016,7 @@ static void prog_wait(Prog *pr) {
 // pieces that read the projection too size themselves in screen units (the opponent's life bar: above them on the
 // TV, far off with an eye's field of view) - both stay on the HUD panel, drawn with the game's camera.
 bool g_vr_hud_draw;
-static bool vr_draw_world_ui(const ShaderInfo *vi) {
+static bool vr_draw_world_ui(const ShaderInfo *vi, uint64_t vcode) {
     static struct { uint64_t addr, seq; int row; } m[128];
     int kinds = 0;
     uint64_t seq = vk_pending_seq();
@@ -6032,8 +6032,23 @@ static bool vr_draw_world_ui(const ShaderInfo *vi) {
         }
         if (m[h].row < 0) continue;
         uint64_t used = (vi->cbuf_dynamic >> k & 1) ? r.size : vi->cbuf_size[k];
-        if (used > (uint64_t)m[h].row * 16)
-            kinds |= vr_effect_block_kinds((const float *)(uintptr_t)r.addr, r.size < 0x800 ? r.size : 0x800, used);
+        if (used > (uint64_t)m[h].row * 16) {
+            int kk = vr_effect_block_kinds((const float *)(uintptr_t)r.addr, r.size < 0x800 ? r.size : 0x800, used);
+            kinds |= kk;
+            static int uilog = -1;  // LARECOMP_VR_UILOG=1: each HUD shader reading camera copies, once
+            if (uilog < 0) uilog = getenv("LARECOMP_VR_UILOG") != NULL;
+            if (uilog) {
+                static uint64_t seen[256];
+                static int nseen;
+                bool dup = false;
+                for (int j = 0; j < nseen && !dup; j++) dup = seen[j] == (vcode ^ (uint64_t)i << 56);
+                if (!dup && nseen < 256) {
+                    seen[nseen++] = vcode ^ (uint64_t)i << 56;
+                    LOG("[vrui] vs %llx slot %d: camera copy at row %d, reads %llu bytes, kinds%s%s%s\n", (unsigned long long)vcode, i,
+                        m[h].row, (unsigned long long)used, kk & VRK_VP ? " VP" : "", kk & VRK_P ? " P" : "", kk & VRK_V ? " V" : "");
+                }
+            }
+        }
     }
     return (kinds & (VRK_VP | VRK_V)) && !(kinds & VRK_P);
 }
@@ -6064,7 +6079,7 @@ static void draw_(CmdRec *r, bool indexed) {
         if (cam && !g_vr_eye) for (int i = 0; i < st.rt.ncolor; i++) vr_note_scene_target(st.rt.color[i]);
         // (a HUD piece drawn with copies of the camera's matrices is anchored in the world - the opponent's life bar
         // and name, damage numbers: drawn into each eye in 3D, where it belongs, not onto the flat panel)
-        bool world_ui = !cam && tgt && st.rt.ncolor == 1 && !st.rt.depth && vr_draw_world_ui(pr->vi);
+        bool world_ui = !cam && tgt && st.rt.ncolor == 1 && !st.rt.depth && vr_draw_world_ui(pr->vi, pr->code[0]);
         if (!cam && !world_ui && tgt && st.rt.ncolor == 1 && !st.rt.depth && (!seen || vr_hud_active(st.rt.color[0])) &&
             vr_hud_wanted(st.rt.color[0])) {
             if (vr_hud_begin(st.rt.color[0])) st.rt_dirty = true;
