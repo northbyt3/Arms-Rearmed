@@ -4,7 +4,7 @@
 // left stick press guard, L / R rush, the left stick moves and curves punches. On the Touch controllers:
 //   right trigger  A (right punch)        left trigger   B (left punch)     (both: grab)
 //   right grip     X (jump)               left grip      Y (dash)           (as the Joy-Cons' R / L in motion play)
-//   A / B          A / B (menus)          X / Y          X / Y
+//   A / B          A / B (menus)          X / Y          L / R (both: "press L + R", e.g. choosing ARMS)
 //   left stick     move (and the d-pad in menus: the game reads the stick there too); its press: guard
 //   right stick    right stick; its press: R (rush)      menu button    + (pause)
 // The game thread reads it through g_vr_buttons / g_vr_stick (runtime/hle/input.c fill_state).
@@ -178,8 +178,8 @@ void vr_input_sync(XrSession xs, XrSpace local, XrTime t, const XrPosef *head) {
     if (held[3]) b |= 1ull << BTN_X;
     if (get_b(xs, A_A)) b |= 1ull << BTN_A;
     if (get_b(xs, A_B)) b |= 1ull << BTN_B;
-    if (get_b(xs, A_X)) b |= 1ull << BTN_X;
-    if (get_b(xs, A_Y)) b |= 1ull << BTN_Y;
+    if (get_b(xs, A_X)) b |= 1ull << BTN_L;  // (jump / dash are on the grips)
+    if (get_b(xs, A_Y)) b |= 1ull << BTN_R;
     if (get_b(xs, A_CLICK_L)) b |= 1ull << BTN_LSTICK;
     if (get_b(xs, A_CLICK_R)) b |= 1ull << BTN_R;
     if (get_b(xs, A_MENU)) b |= 1ull << BTN_PLUS;

@@ -24,7 +24,8 @@ its settings and its save are untouched.
    | Left grip | Y | dash |
    | Left stick (press) | L-stick | move (guard) |
    | Right stick (press) | R-stick (R) | (rush) |
-   | A / B / X / Y | A / B / X / Y | menus |
+   | A / B | A / B | menus |
+   | X / Y (left) | L / R | rush; **X + Y together = "L + R"** (e.g. confirming your ARMS) |
    | ☰ (left menu button) | + | pause |
 
    **Motion punches (fights only)**: throw a real punch with a controller (forward, faster than ~1.6 m/s) and that
