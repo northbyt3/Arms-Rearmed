@@ -208,11 +208,18 @@ Found and fixed while playing:
 
 ## Added after the first live session
 
-- **Camera modes** - the right thumbstick's press cycles them (blink + recenter): **chase** (the game's camera,
-  default), **smooth chase** (its turns smoothed), **snap turns** (turns only in 30+ degree steps with a blink),
-  **far chase** (2.5 m back, 1 m up), **stadium seat** (still, 3 m behind and 1.5 m above where the fight started -
-  no camera motion at all). `LARECOMP_VR_CAMERA` picks the one at start. Outside chase the HUD panel is fixed in
-  front of you. (R is on the left Y button.)
+- **Camera modes** (3) - the right thumbstick's press cycles them, gliding smoothly (0.8 s, eased) from one view to
+  the next: **regular** (the game's camera, default), **far** (2.5 m back, 1 m up), **stadium** (a still seat 3 m
+  behind and 1.5 m above where the fight / the mode began - no camera motion at all, a yellow arrow floats over
+  your fighter). Regular and far are made from the very camera block being drawn (no frame of lag). The stadium
+  arrow's place is estimated: a ray from the game camera through the bottom middle of its picture (where ARMS keeps
+  your fighter) meets the arena floor (`LARECOMP_VR_FLOOR_DROP`, default 2.2 m below the camera at the fight's
+  start). `LARECOMP_VR_CAMERA` picks the mode at start. Outside regular the HUD panel is fixed in front of you.
+- **3D depth** - measured on a live capture: the stereo is right (correct sign, correct scale: the opponent comes out
+  ~1.65 m tall at ~9 m, your fighter ~1.6 m in front of you, the stands 20 m+). At those distances real eyes get
+  little depth (2-5 px of disparity), which reads as flat. `LARECOMP_VR_DEPTH` (default 1.5) widens the eyes'
+  spacing in the game world; live: hold the right stick pressed and push it up / down (steps of 0.25, a tick in
+  the right hand). 1 = true to life; more = stronger 3D (the world feels a little smaller).
 - **World-anchored HUD in 3D**: HUD pieces the game places with the camera (the opponent's life bar, damage numbers)
   are drawn into each eye at their place in the arena instead of flat on the panel.
 - **Quest button prompts**: while the Touch controllers are read, the game's prompts show A / B, RG / LG (grips),

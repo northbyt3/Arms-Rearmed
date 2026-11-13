@@ -6,7 +6,8 @@
 //   right grip     X (jump)               left grip      Y (dash)           (as the Joy-Cons' R / L in motion play)
 //   A / B          A / B (menus)          X / Y          L / R (both: "press L + R", e.g. choosing ARMS)
 //   left stick     move (and the d-pad in menus: the game reads the stick there too); its press: guard
-//   right stick    right stick; its press: the next VR camera mode      menu button    + (pause)
+//   right stick    right stick; its press: the next VR camera mode (regular, far, stadium)      menu button    + (pause)
+//                  held while pushing the right stick up / down: stronger / weaker 3D depth (g_vrs.depth)
 // The game thread reads it through g_vr_buttons / g_vr_stick (runtime/hle/input.c fill_state).
 #include <math.h>
 #include <stdatomic.h>
@@ -20,6 +21,7 @@
 #include <openxr/openxr_platform.h>
 
 #include "../../rt.h"
+#include "vr.h"
 #include "vr_gesture.h"
 
 _Atomic uint64_t g_vr_buttons;   // Switch button bits (input.c's BTN_*)
@@ -68,6 +70,7 @@ static void make(int i, XrActionType type, const char *name, const char *loc, bo
 
 void vr_input_attach(XrInstance xi, XrSession xs, PFN_xrGetInstanceProcAddr gipa) {
     inst = xi;
+#undef G  // (nvn.h's)
 #define G(f, v) gipa(xi, #f, (PFN_xrVoidFunction *)&v)
     G(xrStringToPath, pStringToPath); G(xrCreateActionSet, pCreateActionSet); G(xrCreateAction, pCreateAction);
     G(xrSuggestInteractionProfileBindings, pSuggest); G(xrAttachSessionActionSets, pAttach); G(xrSyncActions, pSync);
@@ -167,6 +170,8 @@ XrPosef g_vr_hand_pose[2];
 XrVector3f g_vr_hand_vel[2], g_vr_hand_angvel[2];
 _Atomic int g_vr_hand_ok[2];
 
+static int depth_tick;  // frames of a light tick in the right hand (the 3D depth stepped)
+
 // (render thread, each frame after xrWaitFrame)
 void vr_input_sync(XrSession xs, XrSpace local, XrTime t, const XrPosef *head) {
     if (!attached) return;
@@ -192,14 +197,29 @@ void vr_input_sync(XrSession xs, XrSpace local, XrTime t, const XrPosef *head) {
     if (get_b(xs, A_X)) b |= 1ull << BTN_L;  // (jump / dash are on the grips)
     if (get_b(xs, A_Y)) b |= 1ull << BTN_R;
     if (get_b(xs, A_CLICK_L)) b |= 1ull << BTN_LSTICK;
-    {   // the right thumbstick's press: the next camera mode (vr.c); R is on the left Y button
-        static bool was;
+    XrVector2f l = get_v(xs, A_STICK_L), r = get_v(xs, A_STICK_R);
+    {   // the right thumbstick's press: released, the next camera mode (vr.c); held while the stick is pushed up /
+        // down, the 3D depth steps (and the stick isn't the game's meanwhile). R is on the left Y button.
+        static bool was, adjusted;
+        static int step_dir;
         bool now = get_b(xs, A_CLICK_R);
-        if (now && !was) { extern void vr_camera_next(void); vr_camera_next(); }
+        if (now && !was) adjusted = false, step_dir = 0;
+        if (now) {
+            int dir = r.y > 0.7f ? 1 : r.y < -0.7f ? -1 : 0;
+            if (dir && dir != step_dir) {
+                float d = g_vrs.depth + dir * 0.25f;
+                g_vrs.depth = d < 0.5f ? 0.5f : d > 4 ? 4 : d;
+                adjusted = true;
+                depth_tick = 4;  // (a tick in the right hand)
+                LOG("[vr] 3D depth x%.2f\n", g_vrs.depth);
+            }
+            step_dir = dir;
+            r.x = r.y = 0;
+        }
+        if (!now && was && !adjusted) { extern void vr_camera_next(void); vr_camera_next(); }
         was = now;
     }
     if (get_b(xs, A_MENU)) b |= 1ull << BTN_PLUS;
-    XrVector2f l = get_v(xs, A_STICK_L), r = get_v(xs, A_STICK_R);
     g_vr_stick[0] = axis(l.x), g_vr_stick[1] = axis(l.y), g_vr_stick[2] = axis(r.x), g_vr_stick[3] = axis(r.y);
     g_vr_input_live = 1;
     bool ok[2];
@@ -257,6 +277,7 @@ void vr_input_sync(XrSession xs, XrSpace local, XrTime t, const XrPosef *head) {
         static float last[2];
         for (int h = 0; h < 2; h++) {
             float amp = vr_rumble_amp(h);
+            if (h == 1 && depth_tick > 0) depth_tick--, amp = fmaxf(amp, 0.3f);
             if (amp < 0.02f && last[h] < 0.02f) continue;
             last[h] = amp;
             XrHapticVibration hv = {XR_TYPE_HAPTIC_VIBRATION};

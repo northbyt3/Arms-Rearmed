@@ -44,10 +44,13 @@ rem markers line up with the fighters; a width in meters = a fixed, smaller pane
 rem set LARECOMP_VR_HUD_DIST=1.6
 rem set LARECOMP_VR_HUD_WIDTH=0
 rem set LARECOMP_VR_HUD_PANEL=1
-rem Camera mode at start (the right thumbstick's press cycles them while playing):
-rem   chase (the game's camera), smooth (its turns smoothed), snap (turns in steps, with a blink),
-rem   far (pulled back and up), stadium (a still seat above the arena: the most comfortable)
-rem set LARECOMP_VR_CAMERA=chase
+rem Camera mode at start (the right thumbstick's press cycles them while playing, with a smooth glide):
+rem   regular (the game's camera), far (pulled back and up), stadium (a still seat in the stands, an arrow over
+rem   your fighter: the most comfortable)
+rem set LARECOMP_VR_CAMERA=regular
+rem 3D depth: how strong the 3D effect is (the eyes' spacing x this; 1 = true to life, default 1.5). While playing:
+rem   hold the right stick pressed and push it up (stronger) or down (weaker); a light tick in the right hand.
+rem set LARECOMP_VR_DEPTH=1.5
 rem Comfort: vignette while the game camera turns / moves fast (0 = off, 1 = strong; default 0.7)
 rem set LARECOMP_VR_VIGNETTE=0.7
 rem Comfort: the camera's height smoothed so jumps don't lift your head (default 1; 0 = follow the game camera)

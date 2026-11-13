@@ -6079,7 +6079,7 @@ static void draw_(CmdRec *r, bool indexed) {
         if (cam && !g_vr_eye) for (int i = 0; i < st.rt.ncolor; i++) vr_note_scene_target(st.rt.color[i]);
         // (a HUD piece drawn with copies of the camera's matrices is anchored in the world - the opponent's life bar
         // and name, damage numbers: drawn into each eye in 3D, where it belongs, not onto the flat panel)
-        bool world_ui = !cam && tgt && st.rt.ncolor == 1 && !st.rt.depth && vr_draw_world_ui(pr->vi, pr->code[0]);
+        bool world_ui = !cam && tgt && st.rt.ncolor == 1 && !st.rt.depth && vr_draw_world_ui(pr->vi, st.program->stages[0].code_addr);
         if (!cam && !world_ui && tgt && st.rt.ncolor == 1 && !st.rt.depth && (!seen || vr_hud_active(st.rt.color[0])) &&
             vr_hud_wanted(st.rt.color[0])) {
             if (vr_hud_begin(st.rt.color[0])) st.rt_dirty = true;

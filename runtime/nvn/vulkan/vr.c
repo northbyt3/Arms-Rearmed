@@ -101,73 +101,97 @@ static void patch_set(float (*r)[4], int base, float ex) {
             VP[i][j] = P[i][0] * V[0][j] + P[i][1] * V[1][j] + P[i][2] * V[2][j] + (j == 3 ? P[i][3] : 0.0f);
 }
 
-// The game camera levelled: its yaw kept, pitch and roll gone (the camera's place unchanged). In VR the user's head
-// sets pitch and roll; a camera pitched by the game while the head is level tilts the whole world.
-// dy: moved up by that much (the height stabilisation, vr_frame_end)
-static void level_set(float (*r)[4], int base, float dy) {
-    float (*V)[4] = r + base, (*IV)[4] = r + base + 11;
-    float c[3] = {IV[0][3], IV[1][3] + dy, IV[2][3]};  // the camera's place
-    float bx = V[2][0], bz = V[2][2], l = sqrtf(bx * bx + bz * bz);
-    if (l < 1e-4f) return;  // (looking straight down: keep it)
-    bx /= l, bz /= l;
-    float R[3][3] = {{bz, 0, -bx}, {0, 1, 0}, {bx, 0, bz}};  // rows: right, up, back (world)
-    for (int i = 0; i < 3; i++) {
-        for (int j = 0; j < 3; j++) V[i][j] = R[i][j], IV[j][i] = R[i][j];
-        V[i][3] = -(R[i][0] * c[0] + R[i][1] * c[1] + R[i][2] * c[2]);
-        IV[i][3] = c[i];
-    }
-}
-
 // One view set moved to a headset eye: E = the eye's pose in the game camera's space (rotation R, place t in game
 // units); view' = E^-1 x view, inverse view' = inverse view x E, the projection the eye's field of view (its depth
 // rows as the game's: same near / far and depth convention).
 static bool cam_stab;        // the height stabilisation applies this frame (vr_frame_end)
 static float cam_smooth_y;   // the camera's smoothed height
 
-// ---- camera modes (the right thumbstick's press cycles them; LARECOMP_VR_CAMERA=chase|smooth|snap|far|stadium)
-// chase: the game's camera (levelled, its height smoothed). The others replace its heading / place with a "rig" made
-// from it each frame (vr_frame_end): smooth - its turns smoothed (~0.35 s); snap - turns only in steps of 30+ degrees,
-// with a blink; far - pulled back 2.5 m and up 1 m; stadium - a seat 3 m behind and 1.5 m above where the fight
-// started, still (no camera motion at all: the head follows the fight).
-enum { CAM_CHASE, CAM_SMOOTH, CAM_SNAP, CAM_FAR, CAM_STADIUM, CAM_N };
-static const char *const cam_names[CAM_N] = {"chase", "smooth chase", "snap turns", "far chase", "stadium seat"};
-static int cam_mode = -1;
-static bool rig_on, rig_reset;  // the rig replaces the game camera this frame; start it over
-static float rig_pos[3], rig_yaw;
-int g_vr_blink_req;              // (vr_xr.c) blink now
+// ---- camera modes (the right thumbstick's press cycles them; LARECOMP_VR_CAMERA=regular|far|stadium)
+// regular: the game's camera (levelled, its height smoothed); far: the same pulled back 2.5 m and up 1 m; stadium: a
+// still seat 3 m behind and 1.5 m above where the camera was when the fight (or the mode) began - no camera motion at
+// all, the head follows the fight; an arrow floats over the player's fighter (vr_player_marker). The views are made
+// from the very block being drawn (no frame of lag: the fighter doesn't jitter); a switch glides from the old mode's
+// view to the new one's over 0.8 s (eased; both keep following the camera meanwhile).
+enum { CAM_REGULAR, CAM_FAR, CAM_STADIUM, CAM_N };
+static const char *const cam_names[CAM_N] = {"regular", "far", "stadium"};
+static int cam_mode = -1, cam_prev;
+static float cam_trans = 1;                 // the switch's progress (1: done)
+static float drawn_yaw, drawn_pos[3];       // the view drawn (this frame's, the left eye's current rows)
+static bool drawn_have;
+static bool immersive;                      // (below: a fight is on, in the arena)
+static float stad_yaw, stad_pos[3];         // the stadium seat
+static bool stad_set;
+int g_vr_blink_req;                         // (vr_xr.c) blink now
 static void cam_mode_init(void) {
     if (cam_mode >= 0) return;
     const char *e = getenv("LARECOMP_VR_CAMERA");
-    cam_mode = CAM_CHASE;
-    for (int i = 0; e && i < CAM_N; i++)
-        if (!strncmp(e, cam_names[i], strlen(e)) && *e) cam_mode = i;
+    cam_mode = CAM_REGULAR;
+    for (int i = 0; e && *e && i < CAM_N; i++)
+        if (!strncmp(e, cam_names[i], strlen(e))) cam_mode = i;
+    cam_prev = cam_mode;
 }
 void vr_camera_next(void) {
     cam_mode_init();
+    cam_prev = cam_mode;
     cam_mode = (cam_mode + 1) % CAM_N;
-    rig_reset = true;
-    g_vr_blink_req = 1;
-    extern void vr_xr_recenter(void);
-    vr_xr_recenter();
+    cam_trans = immersive ? 0 : 1;
+    if (cam_mode == CAM_STADIUM) stad_set = false;  // (a seat behind where the camera is now)
     LOG("[vr] camera: %s\n", cam_names[cam_mode]);
 }
-bool vr_camera_is_game(void) { cam_mode_init(); return cam_mode == CAM_CHASE; }
+bool vr_camera_is_game(void) { cam_mode_init(); return cam_mode == CAM_REGULAR && cam_trans >= 1; }
 
-// The view from the rig: its heading and place (levelled)
-static void rig_set(float (*r)[4], int base) {
+// The view for camera mode m, from the game camera's heading cyaw and place cpos (height smoothed)
+static void mode_view(int m, float cyaw, const float cpos[3], float *yaw, float pos[3]) {
+    float sc = g_vrs.world_scale > 0 ? g_vrs.world_scale : 10;
+    float bx = -sinf(cyaw), bz = cosf(cyaw);  // (its back, level)
+    switch (m) {
+    case CAM_FAR:
+        *yaw = cyaw;
+        pos[0] = cpos[0] + bx * 2.5f * sc, pos[1] = cpos[1] + 1.0f * sc, pos[2] = cpos[2] + bz * 2.5f * sc;
+        break;
+    case CAM_STADIUM:
+        if (!stad_set) {
+            stad_yaw = cyaw;
+            stad_pos[0] = cpos[0] + bx * 3.0f * sc, stad_pos[1] = cpos[1] + 1.5f * sc, stad_pos[2] = cpos[2] + bz * 3.0f * sc;
+            stad_set = true;
+        }
+        *yaw = stad_yaw;
+        memcpy(pos, stad_pos, 3 * sizeof *pos);
+        break;
+    default:
+        *yaw = cyaw;
+        memcpy(pos, cpos, 3 * sizeof *pos);
+    }
+}
+
+// The view set at base levelled and placed for the camera mode (and the switch in progress)
+static void view_set(float (*r)[4], int base) {
     float (*V)[4] = r + base, (*IV)[4] = r + base + 11;
-    float bx = -sinf(rig_yaw), bz = cosf(rig_yaw);
-    float R[3][3] = {{bz, 0, -bx}, {0, 1, 0}, {bx, 0, bz}};
+    float bx = V[2][0], bz = V[2][2];
+    if (bx * bx + bz * bz < 1e-8f) return;  // (looking straight down: keep it)
+    float cyaw = atan2f(-bx, bz);
+    float cpos[3] = {IV[0][3], cam_stab ? cam_smooth_y + (IV[1][3] - r[12][3]) : IV[1][3], IV[2][3]};
+    float yaw, pos[3];
+    mode_view(cam_mode, cyaw, cpos, &yaw, pos);
+    if (cam_trans < 1) {
+        float yaw0, pos0[3], t = cam_trans, e = t * t * (3 - 2 * t);
+        mode_view(cam_prev, cyaw, cpos, &yaw0, pos0);
+        yaw = yaw0 + remainderf(yaw - yaw0, 6.2831853f) * e;
+        for (int i = 0; i < 3; i++) pos[i] = pos0[i] + (pos[i] - pos0[i]) * e;
+    }
+    if (base == ROWS_CUR && g_vr_eye == 0) drawn_yaw = yaw, memcpy(drawn_pos, pos, sizeof drawn_pos), drawn_have = true;
+    float sx = -sinf(yaw), sz = cosf(yaw);
+    float R[3][3] = {{sz, 0, -sx}, {0, 1, 0}, {sx, 0, sz}};  // rows: right, up, back (world)
     for (int i = 0; i < 3; i++) {
         for (int j = 0; j < 3; j++) V[i][j] = R[i][j], IV[j][i] = R[i][j];
-        V[i][3] = -(R[i][0] * rig_pos[0] + R[i][1] * rig_pos[1] + R[i][2] * rig_pos[2]);
-        IV[i][3] = rig_pos[i];
+        V[i][3] = -(R[i][0] * pos[0] + R[i][1] * pos[1] + R[i][2] * pos[2]);
+        IV[i][3] = pos[i];
     }
 }
 
 static void xr_set(float (*r)[4], int base, const float q[4], const float t[3], const float tan[4], bool level) {
-    if (rig_on) rig_set(r, base);
-    else if (level) level_set(r, base, cam_stab ? cam_smooth_y - r[base + 12][3] : 0.0f);
+    if (level) view_set(r, base);
     float (*V)[4] = r + base, (*VP)[4] = r + base + 3, (*P)[4] = r + base + 7, (*IV)[4] = r + base + 11;
     float x = q[0], y = q[1], z = q[2], w = q[3];
     float R[3][3] = {{1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)},
@@ -297,6 +321,12 @@ void vr_patch_camera(float *u, uint64_t size, int eye) {
     float (*r)[4] = (float (*)[4])u;
     float q[4], p[3], tan[4];
     if (vr_eye_view(eye, q, p, tan)) {
+        float q2[4], p2[3], tan2[4];  // (3D depth: the eye moved away from the head's middle, g_vrs.depth)
+        if (g_vrs.depth > 0 && g_vrs.depth != 1 && vr_eye_view(eye ^ 1, q2, p2, tan2))
+            for (int i = 0; i < 3; i++) {
+                float mid = (p[i] + p2[i]) * 0.5f;
+                p[i] = mid + (p[i] - mid) * g_vrs.depth;
+            }
         float t[3] = {p[0] * g_vrs.world_scale, p[1] * g_vrs.world_scale, p[2] * g_vrs.world_scale};
         xr_set(r, ROWS_CUR, q, t, tan, g_vrs.level);
         if (size >= (ROWS_PREV + 14) * 16) xr_set(r, ROWS_PREV, q, t, tan, g_vrs.level);
@@ -370,6 +400,47 @@ bool vr_stereo_frame(void) {
     return immersive && vr_eye_view(0, q, p, tan);
 }
 
+// ---- the player's fighter, roughly (the stadium seat's arrow): ARMS's fight camera keeps the player at the bottom
+// middle of the picture, feet near 85% down. A ray from the game camera through there meets the arena floor (taken as
+// the camera's height when the fight starts minus 2.2 m, LARECOMP_VR_FLOOR_DROP: ARMS's resting fight camera stands
+// about that high); the arrow floats 2.4 m above that point.
+static float player_world[3];
+static bool player_ok;
+static float floor_y;
+static bool floor_have;
+static void player_estimate(void) {
+    player_ok = false;
+    if (!immersive || !ncam) { floor_have = false; return; }
+    float sc = g_vrs.world_scale > 0 ? g_vrs.world_scale : 10;
+    static float drop = -1;
+    if (drop < 0) drop = getenv("LARECOMP_VR_FLOOR_DROP") ? (float)atof(getenv("LARECOMP_VR_FLOOR_DROP")) : 2.2f;
+    if (!floor_have) floor_y = cam_pos[1] - drop * sc, floor_have = true;
+    float dy = -0.7f * tanf(cam_fovy * 0.5f);     // (the ray in view space: (0, dy, -1); NDC y -0.7)
+    float cp = cosf(cam_pitch), sp = sinf(cam_pitch);
+    float fy = sp + dy * cp, fh = cp - dy * sp;   // (pitched: its up and its forward along the heading)
+    if (fy > -1e-3f) return;
+    float t = (floor_y - cam_pos[1]) / fy, fwd = fh * t;
+    if (t <= 0 || fwd > 20 * sc) return;
+    float hx = sinf(cam_yaw), hz = -cosf(cam_yaw);  // (the heading: -back)
+    player_world[0] = cam_pos[0] + hx * fwd;
+    player_world[1] = floor_y + 2.4f * sc;
+    player_world[2] = cam_pos[2] + hz * fwd;
+    player_ok = true;
+}
+
+// The arrow's place for the stadium seat (vr_xr.c): relative to the view drawn, in meters (x right, y up, z back -
+// the headset's reference space axes), false when there's none
+bool vr_player_marker(float out[3]) {
+    if (!player_ok || cam_mode != CAM_STADIUM || !immersive || !stad_set || cam_trans < 1) return false;  // (not while gliding)
+    float sc = g_vrs.world_scale > 0 ? g_vrs.world_scale : 10;
+    float d[3] = {player_world[0] - stad_pos[0], player_world[1] - stad_pos[1], player_world[2] - stad_pos[2]};
+    float sx = -sinf(stad_yaw), sz = cosf(stad_yaw);  // (rows: right (sz, 0, -sx), up, back (sx, 0, sz))
+    out[0] = (sz * d[0] - sx * d[2]) / sc;
+    out[1] = d[1] / sc;
+    out[2] = (sx * d[0] + sz * d[2]) / sc;
+    return true;
+}
+
 void vr_frame_end(void) {
     static int mode = -1;  // 0 auto, 1 screen, 2 scene
     if (mode < 0) {
@@ -400,46 +471,18 @@ void vr_frame_end(void) {
         cam_stab = stab && immersive && have;  // (the next frame's camera goes to that height)
         cam_smooth_y = smooth[1];
     }
-    float view_yaw = cam_yaw, view_pos[3] = {cam_pos[0], cam_stab ? cam_smooth_y : cam_pos[1], cam_pos[2]};
-    {   // the camera mode's rig for the next frame
+    float view_yaw = drawn_have ? drawn_yaw : cam_yaw, view_pos[3];
+    memcpy(view_pos, drawn_have ? drawn_pos : cam_pos, sizeof view_pos);
+    {   // camera modes: the switch's progress; the stadium seat starts over with each fight and camera cut
         cam_mode_init();
-        static bool have;
         static float last_cam[3];
-        float sc = g_vrs.world_scale > 0 ? g_vrs.world_scale : 10;
         float jx = cam_pos[0] - last_cam[0], jz = cam_pos[2] - last_cam[2];
-        bool cut = jx * jx + jz * jz > 25.0f * 25.0f;  // (a camera cut: start over)
+        if (jx * jx + jz * jz > 25.0f * 25.0f || !immersive) stad_set = false;
         memcpy(last_cam, cam_pos, sizeof last_cam);
-        bool reset = rig_reset || !have || !immersive || !ncam || cut;
-        float bx = -sinf(cam_yaw), bz = cosf(cam_yaw);  // (the game camera's back, level)
-        rig_on = immersive && ncam && cam_mode != CAM_CHASE && g_vrs.level;
-        if (rig_on) {
-            float base[3] = {cam_pos[0], cam_stab ? cam_smooth_y : cam_pos[1], cam_pos[2]};
-            switch (cam_mode) {
-            case CAM_SMOOTH:
-                rig_yaw = reset ? cam_yaw : rig_yaw + remainderf(cam_yaw - rig_yaw, 6.2831853f) * 0.045f;
-                memcpy(rig_pos, base, sizeof rig_pos);
-                break;
-            case CAM_SNAP:
-                if (reset) rig_yaw = cam_yaw;
-                else if (fabsf(remainderf(cam_yaw - rig_yaw, 6.2831853f)) > 0.6f) rig_yaw = cam_yaw, g_vr_blink_req = 1;
-                memcpy(rig_pos, base, sizeof rig_pos);
-                break;
-            case CAM_FAR:
-                rig_yaw = cam_yaw;
-                rig_pos[0] = base[0] + bx * 2.5f * sc, rig_pos[1] = base[1] + 1.0f * sc, rig_pos[2] = base[2] + bz * 2.5f * sc;
-                break;
-            case CAM_STADIUM:
-                if (reset) {
-                    rig_yaw = cam_yaw;
-                    rig_pos[0] = base[0] + bx * 3.0f * sc, rig_pos[1] = base[1] + 1.5f * sc, rig_pos[2] = base[2] + bz * 3.0f * sc;
-                }
-                break;
-            }
-            view_yaw = rig_yaw;
-            memcpy(view_pos, rig_pos, sizeof view_pos);
-        }
-        have = immersive && ncam;
-        rig_reset = false;
+        if (cam_trans < 1) cam_trans = fminf(1, cam_trans + 1.0f / 48);  // (0.8 s)
+        if (!immersive) cam_trans = 1;
+        player_estimate();
+        drawn_have = false;  // (the next frame's draw sets it)
     }
     {   // comfort vignette: the edges of the view darken while the game camera turns or moves fast (it yaws > 30
         // degrees/s a fifth of the time in a fight, dashes move it ~6 m/s): less of the artificial motion in the

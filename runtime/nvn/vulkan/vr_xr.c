@@ -250,7 +250,7 @@ typedef struct {
     VmaAllocation own_mem;
     VkImageView own_view;
 } Chain;
-enum { CH_LEFT, CH_RIGHT, CH_PANEL, CH_N };
+enum { CH_LEFT, CH_RIGHT, CH_PANEL, CH_ARROW, CH_N };
 static Chain ch[CH_N];
 static VkFormat sc_fmt, own_fmt;
 static VkCommandPool r_pool;  // (R's copies: recorded once on T before R uses them)
@@ -330,6 +330,61 @@ static bool chain_make(Chain *c, uint32_t w, uint32_t h) {
     return true;
 }
 
+// ---- the stadium seat's marker: a yellow arrow pointing down, outlined dark (drawn here once, straight alpha)
+#define ARROW_PX 128
+static VkBuffer arrow_buf;
+static VmaAllocation arrow_mem;
+static float seg_dist(float px, float py, float ax, float ay, float bx, float by) {
+    float dx = bx - ax, dy = by - ay, t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy);
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    float ex = ax + dx * t - px, ey = ay + dy * t - py;
+    return sqrtf(ex * ex + ey * ey);
+}
+static void arrow_upload(VkCommandBuffer cb) {
+    static const float poly[7][2] = {{0.37f, 0.05f}, {0.63f, 0.05f}, {0.63f, 0.47f}, {0.89f, 0.47f},
+                                     {0.5f, 0.94f}, {0.11f, 0.47f}, {0.37f, 0.47f}};
+    if (arrow_buf) vmaDestroyBuffer(g_vk.vma, arrow_buf, arrow_mem), arrow_buf = VK_NULL_HANDLE;  // (a session before)
+    VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = ARROW_PX * ARROW_PX * 4,
+                             .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT};
+    VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO,
+                                  .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT};
+    VmaAllocationInfo info;
+    if (vmaCreateBuffer(g_vk.vma, &bi, &ai, &arrow_buf, &arrow_mem, &info) != VK_SUCCESS) { arrow_buf = VK_NULL_HANDLE; return; }
+    uint8_t *px = info.pMappedData;
+    bool bgr = own_fmt == VK_FORMAT_B8G8R8A8_UNORM;
+    for (int y = 0; y < ARROW_PX; y++)
+        for (int x = 0; x < ARROW_PX; x++) {
+            float c[4] = {0};  // (4 x 4 samples: yellow inside, dark near the edge, clear outside)
+            for (int sy = 0; sy < 4; sy++)
+                for (int sx = 0; sx < 4; sx++) {
+                    float u = (x + (sx + 0.5f) / 4) / ARROW_PX, v = (y + (sy + 0.5f) / 4) / ARROW_PX, d = 1;
+                    bool in = false;
+                    for (int i = 0, j = 6; i < 7; j = i++) {
+                        d = fminf(d, seg_dist(u, v, poly[i][0], poly[i][1], poly[j][0], poly[j][1]));
+                        if ((poly[i][1] > v) != (poly[j][1] > v) &&
+                            u < (poly[j][0] - poly[i][0]) * (v - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) in = !in;
+                    }
+                    if (in && d > 0.035f) c[0] += 1.0f, c[1] += 0.82f, c[2] += 0.12f, c[3] += 1;
+                    else if (in || d < 0.03f) c[0] += 0.08f, c[1] += 0.06f, c[2] += 0.02f, c[3] += 1;
+                }
+            uint8_t *o = px + (y * ARROW_PX + x) * 4;
+            float a = c[3] / 16;
+            for (int k = 0; k < 3; k++) o[bgr ? 2 - k : k] = (uint8_t)(a > 0 ? c[k] / c[3] * 255 + 0.5f : 0);
+            o[3] = (uint8_t)(a * 255 + 0.5f);
+        }
+    vmaFlushAllocation(g_vk.vma, arrow_mem, 0, VK_WHOLE_SIZE);
+    VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                           .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_HOST_WRITE_BIT,
+                           .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT, .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT | VK_ACCESS_2_TRANSFER_READ_BIT};
+    VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
+    vkCmdPipelineBarrier2(cb, &di);
+    VkBufferImageCopy r = {.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .imageExtent = {ARROW_PX, ARROW_PX, 1}};
+    vkCmdCopyBufferToImage(cb, arrow_buf, ch[CH_ARROW].own, VK_IMAGE_LAYOUT_GENERAL, 1, &r);
+    mb.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT, mb.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    mb.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, mb.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
+    vkCmdPipelineBarrier2(cb, &di);
+}
+
 // ------------------------------------------------------------------ settings
 static float set_f(const char *env, float def) { const char *e = getenv(env); return e && *e ? (float)atof(e) : def; }
 VrSettings g_vrs;
@@ -346,6 +401,9 @@ void vr_settings_init(void) {
     g_vrs.blink = set_f("LARECOMP_VR_BLINK", 0.2f);
     g_vrs.vignette = set_f("LARECOMP_VR_VIGNETTE", 0.7f);   // comfort vignette while the game camera turns / moves fast         // seconds of black when switching big screen <-> arena
     g_vrs.hz = set_f("LARECOMP_VR_HZ", 0);                    // headset refresh rate request (0: as set)
+    g_vrs.depth = set_f("LARECOMP_VR_DEPTH", 1.5f);            // 3D depth (the eyes' spacing x; right stick press + up / down)
+    if (g_vrs.depth < 0.5f) g_vrs.depth = 0.5f;
+    if (g_vrs.depth > 4) g_vrs.depth = 4;
 }
 
 // ------------------------------------------------------------------ session
@@ -385,13 +443,15 @@ static void session_make(void) {
     uint32_t ew = (uint32_t)(vcv[0].recommendedImageRectWidth * g_vrs.res), eh = (uint32_t)(vcv[0].recommendedImageRectHeight * g_vrs.res);
     if (ew > vcv[0].maxImageRectWidth) ew = vcv[0].maxImageRectWidth;
     if (eh > vcv[0].maxImageRectHeight) eh = vcv[0].maxImageRectHeight;
-    if (!chain_make(&ch[CH_LEFT], ew, eh) || !chain_make(&ch[CH_RIGHT], ew, eh) || !chain_make(&ch[CH_PANEL], 1920, 1080)) {
+    if (!chain_make(&ch[CH_LEFT], ew, eh) || !chain_make(&ch[CH_RIGHT], ew, eh) || !chain_make(&ch[CH_PANEL], 1920, 1080) ||
+        !chain_make(&ch[CH_ARROW], ARROW_PX, ARROW_PX)) {
         LOG("[vr] swapchains failed\n");
         return;
     }
     // our images start in GENERAL
     VkCommandBuffer cb = vk_cmd();
     for (int i = 0; i < CH_N; i++) vk_image_init_layout(cb, ch[i].own, VK_IMAGE_ASPECT_COLOR_BIT);
+    arrow_upload(cb);
     renderer_submit();
     extern void vr_input_attach(XrInstance, XrSession, PFN_xrGetInstanceProcAddr);
     vr_input_attach(xi, xs, xr_gipa);
@@ -637,6 +697,8 @@ typedef struct {
     XrView view[2];
     XrPosef panel_pose;
     float panel_w, panel_h;
+    bool arrow;            // the stadium seat's marker over the player's fighter
+    XrPosef arrow_pose;
 } EndArgs;
 static _Atomic uint64_t frames_ended;
 static uint64_t frames_queued;
@@ -657,11 +719,11 @@ static void end_run(const void *p) {
     const EndArgs *a = p;
     XrFrameBeginInfo bi = {XR_TYPE_FRAME_BEGIN_INFO};
     if (!XR_OK(pxrBeginFrame(xs, &bi))) { atomic_fetch_add(&frames_ended, 1); return; }
-    const XrCompositionLayerBaseHeader *layers[2];
+    const XrCompositionLayerBaseHeader *layers[3];
     uint32_t nl = 0;
     XrCompositionLayerProjectionView pv[2];
     XrCompositionLayerProjection proj = {XR_TYPE_COMPOSITION_LAYER_PROJECTION};
-    XrCompositionLayerQuad quad = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    XrCompositionLayerQuad quad = {XR_TYPE_COMPOSITION_LAYER_QUAD}, aq = {XR_TYPE_COMPOSITION_LAYER_QUAD};
     if (a->render && !a->blank) {
         if (a->immersive && chain_put(&ch[CH_LEFT]) && chain_put(&ch[CH_RIGHT])) {
             for (int e = 0; e < 2; e++) {
@@ -676,6 +738,16 @@ static void end_run(const void *p) {
             proj.viewCount = 2;
             proj.views = pv;
             layers[nl++] = (const XrCompositionLayerBaseHeader *)&proj;
+        }
+        if (a->arrow && nl && chain_put(&ch[CH_ARROW])) {  // (under the HUD)
+            aq.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+            aq.space = space_local;
+            aq.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+            aq.subImage.swapchain = ch[CH_ARROW].sc;
+            aq.subImage.imageRect.extent.width = aq.subImage.imageRect.extent.height = ARROW_PX;
+            aq.pose = a->arrow_pose;
+            aq.size.width = aq.size.height = 0.6f;
+            layers[nl++] = (const XrCompositionLayerBaseHeader *)&aq;
         }
         if (a->panel && chain_put(&ch[CH_PANEL])) {
             quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
@@ -765,7 +837,7 @@ static bool offline_make(void) {
     if (done) return done > 0;
     done = -1;
     own_fmt = VK_FORMAT_R8G8B8A8_UNORM;
-    uint32_t sz[CH_N][2] = {{1680, 1760}, {1680, 1760}, {1920, 1080}};
+    uint32_t sz[CH_N][2] = {{1680, 1760}, {1680, 1760}, {1920, 1080}, {ARROW_PX, ARROW_PX}};
     for (int i = 0; i < CH_N; i++) {
         Chain *c = &ch[i];
         c->w = sz[i][0], c->h = sz[i][1];
@@ -834,6 +906,22 @@ void vr_xr_present(NvnTexture *t, const float crop[4]) {
                 a.panel = true;
                 hud_place(&a.panel_pose, &a.panel_w, &a.panel_h);
             }
+            float m[3];
+            extern bool vr_player_marker(float out[3]);
+            if (vr_player_marker(m)) {  // (the arrow bobs gently, turned to face the head)
+                static uint32_t tick;
+                static int mlog = -1;  // LARECOMP_VR_MARKLOG=1: its place, each frame (for checks against the eye images)
+                if (mlog < 0) mlog = getenv("LARECOMP_VR_MARKLOG") != NULL;
+                if (mlog) LOG("[vrmark] f %llu %.3f %.3f %.3f\n", (unsigned long long)vr_frame_id(), m[0], m[1], m[2]);
+                m[1] += 0.08f * sinf(++tick * 0.07f);
+                XrVector3f o = qrot(ref.orientation, (XrVector3f){m[0], m[1], m[2]});
+                XrVector3f at = {ref.position.x + o.x, ref.position.y + o.y, ref.position.z + o.z};
+                float hx = (cur.view[0].pose.position.x + cur.view[1].pose.position.x) * 0.5f - at.x;
+                float hz = (cur.view[0].pose.position.z + cur.view[1].pose.position.z) * 0.5f - at.z;
+                float yaw = atan2f(hx, hz);
+                a.arrow = true;
+                a.arrow_pose = (XrPosef){{0, sinf(yaw * 0.5f), 0, cosf(yaw * 0.5f)}, at};
+            }
             mirror_make(&a);
         } else {  // a menu, a loading screen, a cutscene: the picture on a big screen
             TexBackend *ha, *hb;
@@ -866,8 +954,8 @@ void vr_xr_present(NvnTexture *t, const float crop[4]) {
                 req = false;
                 if (at == n) {
                     void renderer_save_texture_tex(TexBackend *b, const char *path);
-                    static const char *nm[CH_N] = {"L", "R", "panel"};
-                    for (int i = 0; i < CH_N; i++) {
+                    static const char *nm[CH_N] = {"L", "R", "panel", "arrow"};
+                    for (int i = 0; i < CH_ARROW; i++) {
                         if (i < CH_PANEL ? !a.immersive : !a.panel) continue;
                         static TexBackend sb[CH_N];
                         sb[i] = (TexBackend){.image = ch[i].own, .format = own_fmt, .width = ch[i].w, .height = ch[i].h,

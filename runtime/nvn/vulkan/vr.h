@@ -52,6 +52,7 @@ typedef struct {
     float hz;                       // refresh rate to ask for (0: the headset's)
     float blink;                    // seconds of black when switching big screen <-> arena
     float vignette;                 // comfort vignette strength (0 off .. 1)
+    float depth;                    // 3D depth: the eyes' spacing x this (1: true to life; more: stronger 3D)
 } VrSettings;
 extern VrSettings g_vrs;
 
