@@ -200,3 +200,8 @@ Found and fixed while playing:
   HUD trick doesn't recover, or the shade removal taking its translucent backing. Use `build\vrtest\shot.req` on that
   screen to capture the HUD renders and compare.
 - Minor graphics glitches remain here and there; capture with `shot.req` when seen.
+- The opponent's life bar / name tag (e.g. "Byte & Barq") should hang above the opponent but stays on the HUD panel
+  where the flat game's camera would put it - off to the side once your head or the stereo view differs. Same for
+  damage numbers. Idea: tell these world-anchored HUD pieces apart from the fixed ones (timer, portraits) - by
+  their position following the opponent's projection from frame to frame - and draw them into the eyes at the
+  opponent's depth (screen position + depth -> world point -> each eye) instead of onto the panel.
