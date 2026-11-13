@@ -33,8 +33,9 @@ its settings and its save are untouched.
 
    A keyboard / gamepad still works too. The game's rumble goes to the Touch controllers.
 
-**Recenter**: hold the Oculus button on the right controller (the standard Quest recenter) while looking forward.
-You are placed at the game camera; recentering re-aligns "forward" with the fight.
+**Recenter**: automatic — each time a fight starts (and each time you go back to the big screen), wherever your head
+is and faces becomes "forward": the fight starts in front of you, screens appear where you look. Holding the
+Oculus button (the standard Quest recenter) works too. `LARECOMP_VR_AUTO_RECENTER=0` turns the automatic one off.
 
 If something looks wrong, the options at the bottom of `ARMS-VR.bat` (world scale, big-screen size, HUD panel,
 refresh rate) are the first knobs. `LARECOMP_VR_MODE=screen` shows everything on the big screen (a 3D-less
@@ -164,3 +165,4 @@ Diagnostics: `LARECOMP_VR_CAMLOG=1` (scene cameras per frame), `LARECOMP_VR_DRAW
 - Launcher `ARMS-VR.bat`, VR settings template.
 - Motion punches / guard gestures (unit-tested); simulator re-run: no false punches, 60 fps.
 - Fight hysteresis (camera zoom), height stabilisation, blink transitions, comfort vignette (verified in a scripted fight).
+- Soft auto-recenter at each arena / big-screen switch; simulator re-run clean.

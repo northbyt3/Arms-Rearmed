@@ -45,6 +45,8 @@ rem Comfort: vignette while the game camera turns / moves fast (0 = off, 1 = str
 rem set LARECOMP_VR_VIGNETTE=0.7
 rem Comfort: the camera's height smoothed so jumps don't lift your head (default 1; 0 = follow the game camera)
 rem set LARECOMP_VR_STABLE_HEIGHT=1
+rem Recenter automatically when a fight starts / the big screen comes back (default 1)
+rem set LARECOMP_VR_AUTO_RECENTER=1
 rem Comfort: seconds of black when switching between the big screen and the arena (default 0.2)
 rem set LARECOMP_VR_BLINK=0.2
 rem Headset refresh rate to ask for (72, 80, 90, 120; default: as set in the Quest's Link settings)

@@ -268,6 +268,8 @@ void vr_frame_end(void) {
     if (!immersive && good >= 8) immersive = true;
     if (immersive && bad >= 20) immersive = false;
     if (was != immersive) {
+        extern void vr_xr_recenter(void);
+        vr_xr_recenter();  // (the arena / the screen in front of the player)
         LOG("[vr] frame %llu: %s\n", (unsigned long long)vr_frame_id(),
             immersive ? "in the arena (immersive, head tracked)" : "on the big screen");
     }

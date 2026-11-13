@@ -458,6 +458,34 @@ static void fake_init(void) {
     LOG("[vr] fake head: yaw %.0f pitch %.0f, fov +-%.0f degrees\n", yaw, pitch, hf);
 }
 
+// ---- the soft recenter: at each switch between the big screen and the arena (and at the start), the head's place and
+// heading then become the reference - the fight starts in front of the player, the screens appear where they look.
+// The eyes go to the camera relative to it; the panels are placed by it. LARECOMP_VR_AUTO_RECENTER=0: LOCAL as is.
+static XrPosef ref = {{0, 0, 0, 1}, {0, 0, 0}};
+static bool recenter_req = true;
+void vr_xr_recenter(void) { recenter_req = true; }
+static XrVector3f qrot(XrQuaternionf q, XrVector3f v) {  // v rotated by q
+    float tx = 2 * (q.y * v.z - q.z * v.y), ty = 2 * (q.z * v.x - q.x * v.z), tz = 2 * (q.x * v.y - q.y * v.x);
+    return (XrVector3f){v.x + q.w * tx + (q.y * tz - q.z * ty), v.y + q.w * ty + (q.z * tx - q.x * tz),
+                        v.z + q.w * tz + (q.x * ty - q.y * tx)};
+}
+static XrQuaternionf qmul(XrQuaternionf a, XrQuaternionf b) {
+    return (XrQuaternionf){a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+                           a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
+}
+static void recenter_take(const XrPosef *head) {
+    static int on = -1;
+    if (on < 0) on = !getenv("LARECOMP_VR_AUTO_RECENTER") || atoi(getenv("LARECOMP_VR_AUTO_RECENTER"));
+    if (!recenter_req || !on) return;
+    recenter_req = false;
+    XrVector3f f = qrot(head->orientation, (XrVector3f){0, 0, -1});
+    float yaw = atan2f(-f.x, -f.z);
+    ref.orientation = (XrQuaternionf){0, sinf(yaw * 0.5f), 0, cosf(yaw * 0.5f)};
+    ref.position = head->position;
+    LOG("[vr] recentered: heading %.0f degrees, head at %.2f %.2f %.2f\n", yaw * 57.29578f, head->position.x,
+        head->position.y, head->position.z);
+}
+
 static uint32_t view_gen;  // bumped when the eyes change (exec.c memoizes the patched camera per eye and generation)
 uint32_t vr_view_gen(void) { return view_gen; }
 
@@ -488,6 +516,7 @@ void vr_xr_frame_next(void) {
     head.position.x = (cur.view[0].pose.position.x + cur.view[1].pose.position.x) * 0.5f;
     head.position.y = (cur.view[0].pose.position.y + cur.view[1].pose.position.y) * 0.5f;
     head.position.z = (cur.view[0].pose.position.z + cur.view[1].pose.position.z) * 0.5f;
+    if (cur.views_ok) recenter_take(&head);
     vr_input_sync(xs, space_local, fs.predictedDisplayTime, cur.views_ok ? &head : NULL);
 }
 
@@ -496,8 +525,15 @@ void vr_xr_frame_next(void) {
 bool vr_eye_view(int eye, float q[4], float p[3], float tan[4]) {
     const XrView *v = fake_views ? &fake[eye] : cur.views_ok ? &cur.view[eye] : NULL;
     if (!v) return false;
-    q[0] = v->pose.orientation.x, q[1] = v->pose.orientation.y, q[2] = v->pose.orientation.z, q[3] = v->pose.orientation.w;
-    p[0] = v->pose.position.x, p[1] = v->pose.position.y, p[2] = v->pose.position.z;
+    XrPosef e = v->pose;
+    if (!fake_views) {  // (relative to the soft recenter's reference)
+        XrQuaternionf inv = {-ref.orientation.x, -ref.orientation.y, -ref.orientation.z, ref.orientation.w};
+        XrVector3f d = {e.position.x - ref.position.x, e.position.y - ref.position.y, e.position.z - ref.position.z};
+        e.position = qrot(inv, d);
+        e.orientation = qmul(inv, e.orientation);
+    }
+    q[0] = e.orientation.x, q[1] = e.orientation.y, q[2] = e.orientation.z, q[3] = e.orientation.w;
+    p[0] = e.position.x, p[1] = e.position.y, p[2] = e.position.z;
     tan[0] = tanf(v->fov.angleLeft), tan[1] = tanf(v->fov.angleRight), tan[2] = tanf(v->fov.angleUp), tan[3] = tanf(v->fov.angleDown);
     return true;
 }
@@ -572,8 +608,9 @@ static void end_run(const void *p) {
 }
 
 // The panel (menus: the whole picture; fights: the HUD) faces the user, level, at the head's height at the recenter.
-static XrPosef panel_pose(float dist) {
-    XrPosef p = {{0, 0, 0, 1}, {0, 0, -dist}};
+static XrPosef panel_pose(float dist) {  // (dist m in front of the reference, facing it)
+    XrVector3f o = qrot(ref.orientation, (XrVector3f){0, 0, -dist});
+    XrPosef p = {ref.orientation, {ref.position.x + o.x, ref.position.y + o.y, ref.position.z + o.z}};
     return p;
 }
 
