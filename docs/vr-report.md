@@ -170,3 +170,25 @@ Diagnostics: `LARECOMP_VR_CAMLOG=1` (scene cameras per frame), `LARECOMP_VR_DRAW
 - Fight hysteresis (camera zoom), height stabilisation, blink transitions, comfort vignette (verified in a scripted fight).
 - Soft auto-recenter at each arena / big-screen switch; simulator re-run clean.
 - 7-minute soak test: no crash, no leak, 60 fps.
+
+## First live session on the headset (Quest 3S over Link, 2026-11-13)
+
+Found and fixed while playing:
+- **No L + R on the controllers** ("Choose your ARMS" asks for it): left X / Y are now L / R (press both).
+- **Hit sparks, shockwaves, confetti misplaced / squeezed / stuck to the head**: ARMS's effect system keeps its own
+  copy of the camera (view-projection in another constant block). Any block holding copies of the scene camera's
+  matrices is now made per eye too.
+- **HUD drifted from the fighters** (damage numbers, name tags): the HUD panel now covers exactly the game camera's
+  view (its zoom, pitch and height), so screen-placed bits line up with the world.
+- **Grey box over the arena on menus**: the game's full-screen dimming dropped from the HUD panel (per pixel: dark,
+  not fully opaque). A first version that looked at the surroundings left offset bands shaped like each element
+  (the "ghost doubles") - replaced.
+- **HUD colours**: the panel goes to the headset in straight alpha (the compositor decodes its sRGB before blending;
+  premultiplied gamma colour came out dark).
+- **Link drops** (the cable was flaky): the game now reconnects by itself; `ARMS-VR.bat` waits a minute for the
+  headset at start.
+- **Seeing what the headset sees on the PC**: the Oculus Mirror (left eye, exact compositor output) opens with the
+  session. The game window shows an approximation of the left eye (it can't include Link's last-moment reprojection).
+- Live capture: create `build\vrtest\shot.req` while playing; the next frame's eyes, HUD panel and HUD renders are
+  saved to `build\frames\vr_<frame>_*.png`.
+- Useful when Link's PC service isn't running ("no headset"): open the Meta Horizon Link app first.
