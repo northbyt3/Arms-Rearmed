@@ -1409,6 +1409,27 @@ static void begin_pass(void) {
                 t0 ? t0->height : 0, t0 ? t0->width * dsx : 0, t0 ? t0->height * dsy : 0, t0 ? t0->format : 0,
                 st.rt.depth ? "yes" : "no");
     }
+    {   // attachments of one guest size share one scale: an unscaled one beside a scaled one is scaled too
+        // (textures.c vk_tex_follow_scale: ARMS's R8 fighter mask), else the pass is clipped to the smaller image
+        extern bool vk_tex_follow_scale(NvnTexture *t);
+        NvnTexture *all[9];
+        int n = 0;
+        for (int i = 0; i < st.rt.ncolor && i < 8; i++) if (st.rt.color[i]) all[n++] = st.rt.color[i];
+        if (st.rt.depth) all[n++] = st.rt.depth;
+        NvnTexture *ref = NULL;
+        for (int i = 0; i < n && !ref; i++) {
+            float sx = 1, sy = 1;
+            renderer_texture_scale(all[i], &sx, &sy);
+            if (sx != 1 || sy != 1) ref = all[i];
+        }
+        if (ref)
+            for (int i = 0; i < n; i++) {
+                float sx = 1, sy = 1;
+                renderer_texture_scale(all[i], &sx, &sy);
+                if (all[i] != ref && sx == 1 && sy == 1 && all[i]->width == ref->width && all[i]->height == ref->height)
+                    vk_tex_follow_scale(all[i]);
+            }
+    }
     VkRenderingAttachmentInfo ca[8], da = {0}, sa = {0};
     uint32_t w = 0, minw = UINT32_MAX, minh = UINT32_MAX;  // w: first attachment seen
     pass_ncolor = (uint32_t)st.rt.ncolor;
@@ -1498,6 +1519,45 @@ static void begin_pass(void) {
         }
     }
     pass_w = minw; pass_h = minh;
+    {   // (debug) LARECOMP_LOG_PASS_MISMATCH=1: a pass whose attachments have different sizes (the pass is clipped to
+        // the smallest: one target left unscaled draws the frame into a corner) - each combination once
+        static int on = -1;
+        if (on < 0) on = getenv("LARECOMP_LOG_PASS_MISMATCH") != NULL;
+        uint32_t maxw = 0;
+        for (int i = 0; i < st.rt.ncolor; i++) if (st.rt.color[i] && st.rt.color[i]->backend) { TexBackend *b = st.rt.color[i]->backend; if (b->width > maxw) maxw = b->width; }
+        if (st.rt.depth && st.rt.depth->backend && ((TexBackend *)st.rt.depth->backend)->width > maxw) maxw = ((TexBackend *)st.rt.depth->backend)->width;
+        static uint64_t seen[64];
+        static int nseen;
+        bool off_scale = false;  // (an attachment whose image isn't its guest size times its scale)
+        for (int i = 0; i < st.rt.ncolor; i++) {
+            NvnTexture *t = st.rt.color[i];
+            TexBackend *b = t ? t->backend : NULL;
+            float tsx = 1, tsy = 1;
+            if (b) { renderer_texture_scale(t, &tsx, &tsy); off_scale |= labs((long)b->width - lroundf(t->width * tsx)) > 2; }
+        }
+        if (on && (maxw > minw || off_scale) && nseen < 64) {
+            uint64_t key = 0;
+            for (int i = 0; i < st.rt.ncolor; i++) if (st.rt.color[i]) key = key * 31 + st.rt.color[i]->format * 7919u + st.rt.color[i]->width;
+            if (st.rt.depth) key = key * 31 + st.rt.depth->format * 104729u + st.rt.depth->width;
+            bool dup = false;
+            for (int i = 0; i < nseen; i++) dup |= seen[i] == key;
+            if (!dup) {
+                seen[nseen++] = key;
+                LOG("[passmis] pass %ux%u (largest %u):", minw, minh, maxw);
+                for (int i = 0; i < st.rt.ncolor; i++) {
+                    NvnTexture *t = st.rt.color[i];
+                    TexBackend *b = t ? t->backend : NULL;
+                    if (b) LOG(" c%d guest %ux%u fmt %#x flags %#x -> %ux%u scalable %d s %.2f", i, t->width, t->height, t->format, t->flags, b->width, b->height, b->scalable, b->sx);
+                }
+                if (st.rt.depth && st.rt.depth->backend) {
+                    NvnTexture *t = st.rt.depth;
+                    TexBackend *b = t->backend;
+                    LOG(" d guest %ux%u fmt %#x flags %#x -> %ux%u scalable %d s %.2f", t->width, t->height, t->format, t->flags, b->width, b->height, b->scalable, b->sx);
+                }
+                LOG("\n");
+            }
+        }
+    }
     VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, {minw, minh}}, .layerCount = 1,
                           .colorAttachmentCount = pass_ncolor, .pColorAttachments = pass_ncolor ? ca : NULL,
                           .pDepthAttachment = has_d ? &da : NULL, .pStencilAttachment = has_s ? &sa : NULL};

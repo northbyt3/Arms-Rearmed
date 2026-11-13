@@ -182,6 +182,66 @@ inherited "LAS Recomp" ones included (message boxes, the crash dialog, the CPU c
   `--game=` (same as `--base=`) and each option as two arguments (`--keys <prod.keys>`). Without these options
   nothing changed. README: the "Get it on RecompLauncher" badge.
 
+## ARMS 5.5.1, scaled resolutions fixed (2026-11-13)
+
+**ARMS 5.5.1 supported** (update title 01009B500007C800 v19, main build ID BBA3811191DE71D9B55E53F918AE5DC1),
+beside 5.4.0. Its `main` loads to the same size as 5.4.0's (0x1769000) and the runtime needs no game addresses yet
+(`GameAddrs` is empty; the addresses in `runtime/hle/game_hooks.c` are MUA3 leftovers that never run), so the two
+versions share an empty table. Recompiled from a 5.5.1 copy: no unsupported instructions; boots, prepares 1788
+shaders (82 of the list's 5.4.0 variants not found), title, menus, character select and Grand Prix fights at 60 fps.
+- `runtime/game_addresses.c`: the 5.5.1 entry; the unsupported-version message names both versions.
+- `tools/nsp_extract.py`: `--build` takes several build IDs, comma separated.
+- `launcher/launcher.cpp`: the release's extract step accepts both build IDs; the GAME FILES row and the prepare
+  error say "5.4.0 or 5.5.1".
+- `runtime/crash_explain.c`: the wrong-version explanation names both versions.
+
+**Scaled internal resolutions (above 1x) drew the 3D scene into the top-left corner.** At 2x the scene, the fighters
+and character select's fighter showed in the top-left quarter of the screen, with black fighter silhouettes over the
+rest. ARMS's scene pass draws an R8 fighter mask (the composite's "fighter pixels", see "Fixed: the fighters") beside
+the colour target, and creates it without the compressible flag (`flags & 8`), which `tex_scalable` takes as the
+mark of a render target: the mask stayed at the guest size, and the pass, clipped to its smallest attachment, drew
+only that part of the scaled colour target. A render target drawn in the same pass as scaled ones of its guest size
+now follows their scale (`textures.c` `vk_tex_follow_scale`, called from `exec.c` `begin_pass`; its image is made
+again at the render scale). Nothing changes at 1x. Checked at 2x in a 2560x1440 window: menus, character select,
+difficulty select, the ARMS LIVE intro and a Grand Prix fight fill the window.
+
+**Button icons in your input's style: PlayStation, Xbox, keyboard and mouse.** ARMS draws its button prompts as
+characters of an icon font (U+E0A0.., the Switch's NintendoExt layout: an outline set from E0A0, a filled set from
+E0E0; the game tints them: the yellow footer, the orange L / R): one BC4 mask sheet, 512x1024, cells 43x49 in 11
+columns, rows from the bottom and each upside down, in `Font/BmpFont_<region>.szs` (Yaz0 > SARC >
+`ARMSIconFont.bffnt`). `runtime/nvn/texpatch.c` (LAS Recomp's prompt restyling, which knew only Link's Awakening's
+textures) now reads that font from the player's own files (in place from the NSPs: `romfs_file_find`; a small Yaz0
+decoder; the sheet's image starts at its offset rounded up to the texture's 0x2000 block, not at the 0x1000 the
+font's TGLP field gives) and identifies the sheet when the game uploads it (a new BC4 kind in the codecs).
+- Restyled glyphs (both sets): A B X Y L R ZL ZR, Plus and Minus, the L / R stick, the L / R stick press (ARMS:
+  guard is the left stick's press).
+- PlayStation / Xbox: the existing relabelling (✕ ○ □ △, L1 / R1 / L2 / R2, Options / Create; Xbox letters, LB / RB /
+  LT / RT, Menu / View); the outline set's round buttons are redrawn whole (a ring at the font's stroke width with
+  the symbol: relabelling thinned the ring); stick presses become L3 / R3 (LS / RS). By position, as the bindings
+  say (Switch A = the right face button = ○).
+- Keyboard and mouse (new style): each glyph is redrawn as a key cap or a mouse with its button marked, in the
+  set's look (filled: the label cut out of the cap; outline: drawn), from the keyboard bindings (`g_bind_key`):
+  letters and digits, Ctrl / Alt / Tab / Esc / Caps, symbols for Shift, Space, Enter, Backspace and the arrows; the
+  sticks show their four movement keys ("WASD"). Labels of any length are fitted to the cap.
+- "Button icons" (Controls tab) has a Keyboard & mouse choice (`prompts = keyboard` in larecomp.ini), and Auto now
+  follows the device used last (`runtime/hle/input.c` `input_last_kbm`: a key, a mouse button, the wheel or the mouse
+  moved a good way; a controller button or a stick / trigger pushed past drift); before either, the keyboard unless a
+  controller is connected. A change re-uploads the sheet (`texpatch_generation`, which now also follows the keyboard
+  bindings in that style).
+- Checked: the title ("PRESS L1 + R1", "PRESS Q + E"), the main menu and character select footers.
+- `LARECOMP_PROMPTS=keyboard` (test override, beside nintendo / xbox / playstation); `LARECOMP_LOG_ICONS=1` logs
+  each restyled glyph (code, cell, icon).
+
+**Build (Windows):** MSYS2 puts `vk_mem_alloc.h` in `include/vma/`; the Makefile adds that folder when it's there.
+README: the package list names `mingw-w64-ucrt-x86_64-sdl3` (lower case, as MSYS2 has it now) and adds
+`mingw-w64-ucrt-x86_64-vulkan-memory-allocator`.
+
+**Debugging switches added:**
+- `LARECOMP_DUMP_TEX=<w>x<h>`: level 0 of each texture of that size, linear, as it is uploaded, to
+  `build/texdump/<address>_<w>x<h>_f<format>.bin` (how the button-icon font sheet below was found).
+- `LARECOMP_LOG_PASS_MISMATCH=1`: each pass whose attachments differ in size, or whose image isn't its guest size
+  times its scale, once per combination (how the scaling bug above was found).
+
 What this project changed relative to [LAS Recomp](https://github.com/peiikai/LASRecomp) (its recompiler and Switch
 runtime), why, and where. It also lists the debugging switches, the test routes, the known gaps and the next steps.
 It started as DOAX3 Recomp (the sections from "Project setup" to "Test routes" are that work, which MUA3 inherits:

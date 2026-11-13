@@ -1,7 +1,7 @@
 # Third-party components in the ARMS Rearmed release
 
 ARMS Rearmed's release zip contains **no game code, game data, art, fonts or keys from Nintendo**. The player supplies
-their own legally obtained copy of ARMS, its 5.4.0 update and their console's keys; the game code is recompiled from
+their own legally obtained copy of ARMS, its 5.4.0 or 5.5.1 update and their console's keys; the game code is recompiled from
 those files on the player's own PC by the tools below.
 
 ARMS Rearmed is built on LAS Recomp by Peiikai and contributors (MIT License, `LICENSE.LASRecomp`). These components

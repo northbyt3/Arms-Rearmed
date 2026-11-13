@@ -673,7 +673,7 @@ static void release_steps(bool extract, bool recompile, bool build) {
     if (extract) {
         std::string c = gen + " extract " + q(p_base) + " " + q(p_keys) + " extracted";
         if (p_update[0]) c += " --update " + q(p_update);
-        c += " --title 01009B500007C000 --build 501924b7c22129e5 --want \"ARMS 5.4.0\"";  // (else: why, in one line)
+        c += " --title 01009B500007C000 --build 501924b7c22129e5,bba3811191de71d9 --want \"ARMS 5.4.0 or 5.5.1\"";  // (else: why, in one line)
         Step s = {"Extract the game's code", c, g_root, false};
         s.weight = 1;
         g_steps.push_back(s);
@@ -994,7 +994,7 @@ static void page_setup(SDL_Window *win) {
     ImGui::Spacing();
     float lw = 270 * g_scale;
     path_row("Base game (XCI or NSP)", p_base, sizeof p_base, 0, win, false, lw);
-    path_row("5.4.0 update (NSP)", p_update, sizeof p_update, 1, win, false, lw);
+    path_row("Update: 5.4.0 or 5.5.1 (NSP)", p_update, sizeof p_update, 1, win, false, lw);
     path_row("Keys (prod.keys)", p_keys, sizeof p_keys, 2, win, false, lw);
     ImGui::Spacing();
     if (g_release) {
@@ -1278,7 +1278,7 @@ static int prepare_cli(int argc, char **argv) {
     if (!g_release) return fail("This isn't a release folder (armsgen, zig and gamelib-src next to the launcher).");
     if (!p_base[0] || !is_file(p_base)) return fail("The game (an XCI or NSP of ARMS) wasn't found: " + std::string(p_base));
     if (!p_keys[0] || !is_file(p_keys)) return fail("The keys file (prod.keys) wasn't found: " + std::string(p_keys));
-    if (!p_update[0] || !is_file(p_update)) return fail("The 5.4.0 update (NSP) wasn't found: " + std::string(p_update));
+    if (!p_update[0] || !is_file(p_update)) return fail("The update (5.4.0 or 5.5.1 NSP) wasn't found: " + std::string(p_update));
     paths_to_ini();
     start_steps(true, true, true);
     g_worker.join();

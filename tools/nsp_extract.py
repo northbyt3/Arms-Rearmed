@@ -403,7 +403,7 @@ def check_copy(a, base, upd):
         sec = {s.idx: s for s in (upd or base)['program'].sections}[0]
         main = [(off, size) for name, off, size in pfs0_entries(sec.read, sec.data_off) if name == 'main']
         build = sec.read(main[0][0] + 0x40, 0x20).hex() if main else ''
-        if not build.startswith(a.build.lower()):
+        if not any(build.startswith(b.strip()) for b in a.build.lower().split(',') if b.strip()):
             refuse(f'This is another version of the game: {a.want} is needed, '
                      + ('and the update given is a different one.' if upd else 'with its update (none was given).'))
 
@@ -421,7 +421,8 @@ def main():
                          'extract: copy every file out to <outdir>/romfs')
     ap.add_argument('--files', help='also copy out the RomFS files whose path contains this text')
     ap.add_argument('--title', help="the game's title ID (hex): any other game is refused, with a one-line reason")
-    ap.add_argument('--build', help="the start of exefs/main's build ID (hex): any other version is refused")
+    ap.add_argument('--build', help="the start of exefs/main's build ID (hex; several, comma separated): any other "
+                                    "version is refused")
     ap.add_argument('--want', default='the game', help='what --title and --build name, for those messages: "ARMS 5.4.0"')
     a = ap.parse_args()
     keys = load_keys(a.keys)

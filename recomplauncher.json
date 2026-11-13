@@ -33,7 +33,7 @@
     },
     {
       "id": "update",
-      "label": "The ARMS 5.4.0 update (NSP) from your own Switch. Keep both files where they are: the game reads its data from them.",
+      "label": "The ARMS 5.4.0 or 5.5.1 update (NSP) from your own Switch. Keep both files where they are: the game reads its data from them.",
       "role": "update",
       "formats": [
         {

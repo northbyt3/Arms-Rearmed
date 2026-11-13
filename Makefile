@@ -18,6 +18,10 @@ DEPS     ?=
 
 OSFLAGS  := -D_FILE_OFFSET_BITS=64 -D_POSIX_THREAD_SAFE_FUNCTIONS -D_CRT_RAND_S -DWIN32_LEAN_AND_MEAN -DNOMINMAX \
             $(if $(DEPS),-I$(DEPS)/include)
+# Vulkan Memory Allocator (vk_mem_alloc.h): MSYS2's mingw-w64-ucrt-x86_64-vulkan-memory-allocator puts it in include/vma
+ifneq ($(wildcard /ucrt64/include/vma/vk_mem_alloc.h),)
+OSFLAGS  += -I$(shell cygpath -m /ucrt64/include/vma)
+endif
 GENARCH  ?= -march=x86-64-v3  # AVX2 + FMA for the lifted FP/SIMD code (simd.h)
 GENFLAGS := -O1 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -Iruntime \
             -D_FILE_OFFSET_BITS=64 $(GENARCH)
