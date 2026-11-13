@@ -273,6 +273,9 @@ void vr_frame_end(void) {
         LOG("[vr] frame %llu: %s\n", (unsigned long long)vr_frame_id(),
             immersive ? "in the arena (immersive, head tracked)" : "on the big screen");
     }
+    if (frame_id % 1800 == 0)  // (every ~30 s: the stereo images, to see none pile up)
+        LOG("[vr] status: frame %llu, %s, %d stereo images, vignette %.2f\n", (unsigned long long)frame_id,
+            immersive ? "arena" : "big screen", g_nreg, vignette);
     frame_id++;
     hud_began[0] = hud_began[1] = false;
     ncam = 0;

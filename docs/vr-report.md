@@ -63,6 +63,7 @@ I could not wear the headset, so everything below was verified with:
 | 60 fps at 2x internal res, both eyes | ✅ GPU 3.3 ms/frame (GTX 1080 Ti) |
 | Motion punches / guard (controller motion → the game's punch / guard buttons) | ✅ unit-tested (`vr/vr_gesture_test.c`, 15 cases), no false punches with idle controllers in the simulator; feel untested |
 | Stays in the arena through a real fight (scripted 40 s fight: punches, grabs, jumps, dashes, a KO) | ✅ |
+| Stability: 7-minute soak (two matches, several rounds, a stage change, scripted play) | ✅ no crash, stereo images bounded (~40-90, freed on stage changes), 60 fps |
 | Comfort: vignette while the camera turns/moves fast, height stabilisation, blink on mode switches | ✅ |
 | True Joy-Con motion mode (IMU emulation: curving by tilting, etc.) | ❌ not done, see below |
 
@@ -166,3 +167,4 @@ Diagnostics: `LARECOMP_VR_CAMLOG=1` (scene cameras per frame), `LARECOMP_VR_DRAW
 - Motion punches / guard gestures (unit-tested); simulator re-run: no false punches, 60 fps.
 - Fight hysteresis (camera zoom), height stabilisation, blink transitions, comfort vignette (verified in a scripted fight).
 - Soft auto-recenter at each arena / big-screen switch; simulator re-run clean.
+- 7-minute soak test: no crash, no leak, 60 fps.
