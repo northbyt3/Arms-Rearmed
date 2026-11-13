@@ -333,7 +333,8 @@ static const char *builtin_src(const char *name, int *stage) {
                "  vec3 c = p.b.w > 0.5 ? vec3(0.0) : texture(t0, f).rgb;\n"
                "  if (p.b.z > 0.5 && f.x >= p.a.x && f.x <= p.a.z && f.y >= p.a.y && f.y <= p.a.w) {\n"
                "    vec4 h = texture(t1, (f - p.a.xy) / (p.a.zw - p.a.xy));\n"
-               "    c = c * (1.0 - h.a) + h.rgb;\n"
+               "    vec3 bl = pow(c, vec3(2.2)), hl = pow(h.rgb, vec3(2.2));\n"   // (straight alpha, blended in linear light:
+               "    c = pow(bl * (1.0 - h.a) + hl * h.a, vec3(1.0 / 2.2));\n"   //  as the headset's compositor does)
                "  }\n"
                "  o = vec4(c, 1.0);\n"
                "}\n";
@@ -371,7 +372,8 @@ static const char *builtin_src(const char *name, int *stage) {
                "    }\n"
                "    if (flat_) c = vec4(0.0);\n"
                "  }\n"
-               "  o = c;\n"
+               "  o = c.a > 0.002 ? vec4(min(c.rgb / c.a, vec3(1.0)), c.a) : vec4(0.0);\n"  // (straight alpha: the
+               // headset's sRGB swapchain is decoded before blending, premultiplied gamma-space colour came out dark)
                "}\n";
     }
     if (!strcmp(name, "post.vert")) {

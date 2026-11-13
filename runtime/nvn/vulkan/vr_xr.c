@@ -649,7 +649,7 @@ static void end_run(const void *p) {
             layers[nl++] = (const XrCompositionLayerBaseHeader *)&proj;
         }
         if (a->panel && chain_put(&ch[CH_PANEL])) {
-            quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+            quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
             quad.space = space_local;
             quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
             quad.subImage.swapchain = ch[CH_PANEL].sc;
@@ -810,14 +810,24 @@ void vr_xr_present(NvnTexture *t, const float crop[4]) {
         }
         renderer_submit();
         // LARECOMP_VR_SHOT_AT=<present>,...: what goes to the headset that frame -> build/frames/vr_N_{L,R,panel}.png
+        // (also while playing: creating build/vrtest/shot.req saves the next frame's, then the file goes)
         static const char *shots;
-        static int sinit;
+        static int sinit, req_tick;
         if (!sinit) sinit = 1, shots = getenv("LARECOMP_VR_SHOT_AT");
-        if (shots) {
+        bool req = false;
+        if (++req_tick >= 30) {  // (twice a second)
+            req_tick = 0;
+            FILE *rf = fopen("build/vrtest/shot.req", "rb");
+            if (rf) fclose(rf), remove("build/vrtest/shot.req"), req = true;
+        }
+        if (shots || req) {
             uint64_t n = vr_frame_id();  // (the frame being presented)
-            for (const char *s = shots; *s;) {
-                char *e;
-                unsigned long long at = strtoull(s, &e, 10);
+            static const char none[] = "";
+            for (const char *s = shots ? shots : none; req || *s;) {
+                char *e = (char *)s;
+                unsigned long long at = req ? n : strtoull(s, &e, 10);
+                if (req) e = (char *)none;
+                req = false;
                 if (at == n) {
                     void renderer_save_texture_tex(TexBackend *b, const char *path);
                     static const char *nm[CH_N] = {"L", "R", "panel"};
