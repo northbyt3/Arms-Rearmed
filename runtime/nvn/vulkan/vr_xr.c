@@ -410,6 +410,35 @@ static void set_refresh(void) {
     if (g_vrs.hz > 0) XR_OK(pxrRequestDisplayRefreshRateFB(xs, g_vrs.hz));
 }
 
+// ---- the exact left-eye view on the PC: Meta's own mirror (Oculus Mirror, part of Link) shows the compositor's final
+// picture - timewarped to the head's latest pose, with the panels where the headset shows them - which the game's
+// window cannot (its mirror is the picture before that). Opened once when the session begins, if Link has it and it
+// isn't already open. LARECOMP_VR_OCULUS_MIRROR=0: not opened.
+static void headset_mirror_open(void) {
+#ifdef _WIN32
+    static bool done;
+    const char *e = getenv("LARECOMP_VR_OCULUS_MIRROR");
+    if (done || (e && !atoi(e))) return;
+    done = true;
+    if (FindWindowA(NULL, "Oculus Mirror")) return;
+    char exe[MAX_PATH];
+    const char *pf = getenv("ProgramFiles");
+    snprintf(exe, sizeof exe, "%s\\Meta Horizon\\Support\\oculus-diagnostics\\OculusMirror.exe", pf ? pf : "C:\\Program Files");
+    if (GetFileAttributesA(exe) == INVALID_FILE_ATTRIBUTES) {
+        snprintf(exe, sizeof exe, "%s\\Oculus\\Support\\oculus-diagnostics\\OculusMirror.exe", pf ? pf : "C:\\Program Files");
+        if (GetFileAttributesA(exe) == INVALID_FILE_ATTRIBUTES) return;
+    }
+    char cmd[MAX_PATH + 64];
+    snprintf(cmd, sizeof cmd, "\"%s\" --LeftEyeOnly --Size 1080 1080", exe);
+    STARTUPINFOA si = {sizeof si};
+    PROCESS_INFORMATION pi;
+    if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE, DETACHED_PROCESS, NULL, NULL, &si, &pi)) {
+        CloseHandle(pi.hThread), CloseHandle(pi.hProcess);
+        LOG("[vr] opened the Oculus Mirror window (the headset's exact left-eye view)\n");
+    }
+#endif
+}
+
 // ---- the headset lost (Link dropped, the session closed from the Meta menu): everything OpenXR made goes, with our
 // images; vr_xr_frame_next tries again every two seconds, quietly, and the game goes back into the headset.
 static bool lost;
@@ -450,7 +479,7 @@ static void poll_events(void) {
             LOG("[vr] session state %d\n", xstate);
             if (xstate == XR_SESSION_STATE_READY && !running) {
                 XrSessionBeginInfo bi = {XR_TYPE_SESSION_BEGIN_INFO, NULL, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
-                if (XR_OK(pxrBeginSession(xs, &bi))) { running = true; set_refresh(); }
+                if (XR_OK(pxrBeginSession(xs, &bi))) { running = true; set_refresh(); headset_mirror_open(); }
             } else if (xstate == XR_SESSION_STATE_STOPPING && running) {
                 rec_drain();
                 XR_OK(pxrEndSession(xs));
