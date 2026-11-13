@@ -12,3 +12,7 @@ __pycache__/
 *.out
 launcher.ini
 cache*/
+
+# VR (ARMS-VR.bat)
+larecomp-vr.ini
+save-vr/

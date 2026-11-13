@@ -1,0 +1,138 @@
+# ARMS Rearmed VR — progress report
+
+Branch `vr` (local only, not pushed), worktree `Arms-Rearmed-vr` next to the main checkout. The main checkout,
+its settings and its save are untouched.
+
+## TL;DR — how to try it (Quest 3 over Link)
+
+1. On the PC: start **Meta Horizon Link** (the Oculus app). On the Quest 3: enable **Link** (cable or Air Link) so
+   you are in the Link home.
+2. Double-click **`ARMS-VR.bat`** in `Arms-Rearmed-vr`.
+   - First run copies your save (`..\Arms-Rearmed\save` → `save-vr`) and makes `larecomp-vr.ini` (2x internal
+     resolution). Your normal game's save and settings are never written.
+3. Put the headset on. Menus, intros and the VS screen appear on a **big screen** in front of you. When a fight
+   starts you are **in the arena**: head-tracked, stereo, standing where the game camera is (behind your fighter),
+   with the HUD on its own panel in front of you.
+4. Controls on the Touch controllers (ARMS's button scheme):
+
+   | Touch | Game | In a fight |
+   |---|---|---|
+   | Right trigger | A | punch right |
+   | Left trigger | B | punch left |
+   | Both triggers | A + B | grab |
+   | Right grip | X | jump |
+   | Left grip | Y | dash |
+   | Left stick (press) | L-stick | move (guard) |
+   | Right stick (press) | R-stick (R) | (rush) |
+   | A / B / X / Y | A / B / X / Y | menus |
+   | ☰ (left menu button) | + | pause |
+
+   A keyboard / gamepad still works too. The game's rumble goes to the Touch controllers.
+
+**Recenter**: hold the Oculus button on the right controller (the standard Quest recenter) while looking forward.
+You are placed at the game camera; recentering re-aligns "forward" with the fight.
+
+If something looks wrong, the options at the bottom of `ARMS-VR.bat` (world scale, big-screen size, HUD panel,
+refresh rate) are the first knobs. `LARECOMP_VR_MODE=screen` shows everything on the big screen (a 3D-less
+fallback that still uses the headset).
+
+## Status (what works, verified without the headset)
+
+I could not wear the headset, so everything below was verified with:
+- **Offline renders**: a made-up head pose (`LARECOMP_VR_FAKE_HEAD=yaw,pitch,fov`) runs the full VR render path
+  and saves exactly what would go to the headset (`LARECOMP_VR_SHOT_AT=frame` → `build/frames/vr_N_{L,R,panel}.png`).
+- **Meta XR Simulator** (installed through the Meta `metavr` tool into `%APPDATA%\metavr\tools\xrsim`, selected
+  per process with `XR_RUNTIME_JSON`, so your system OpenXR runtime stayed Link): the real OpenXR path ran through
+  menus → big screen → fight at a steady 60 fps, session states READY → SYNCHRONIZED → VISIBLE → FOCUSED, no
+  OpenXR errors, Touch bindings accepted, refresh rates 72/80/90/120 offered.
+
+| Feature | State |
+|---|---|
+| Stereo rendering (every scene pass rendered per eye) | ✅ verified: correct parallax (near fighter ~30 px, crowd ~3 px at 1x) |
+| Head tracking (the headset's pose and per-eye field of view drive the camera) | ✅ math verified with fake poses; real headset untested |
+| Levelled horizon (game camera pitch/roll removed; your head does that) | ✅ |
+| Wide FOV (~100°) without culling holes | ✅ looking 70° sideways/down showed a complete arena |
+| Fights immersive, everything else on a big screen | ✅ automatic (see below) |
+| HUD on its own panel in fights (not smeared across your view) | ✅ with correct transparency |
+| Touch controllers as the pad, rumble on the controllers | ✅ bindings accepted by the simulator; feel untested |
+| 60 fps at 2x internal res, both eyes | ✅ GPU 3.3 ms/frame (GTX 1080 Ti) |
+| Motion controls (punching with the controllers) | 🚧 see "Next" |
+
+## How it works (short)
+
+- **Two eyes from one game**: each command list the game submits is translated twice by the Vulkan backend, once
+  per eye. Textures the scene camera draws into get a "twin" image for the right eye; during the right eye's pass
+  every texture object of such an image points at its twin. Shadow maps and CPU-side effects run once.
+- **The camera**: ARMS's scene camera constant block (view, view-projection, projection, inverse view, previous
+  frame's set) is recognised in the constant buffers and rewritten per eye: view = eye pose⁻¹ × levelled game
+  view (eye pose in meters × world scale, 10 units/m), projection = the eye's asymmetric frustum (the game's depth
+  rows kept).
+- **Which frames are immersive**: the fight camera has a signature (one scene camera, 55° FOV). 8 frames of it turn
+  the arena on, 20 frames without it turn it off. The ARMS LIVE intro (50°), character select, VS screen (two
+  cameras) etc. go to the big screen, rendered once (no second eye pass: cheaper).
+- **HUD**: in fights, draws after the scene into the HUD layer are redirected: the left pass draws them over black,
+  the right pass over white; alpha = 1 − (white − black) recovers exact coverage for any blend mode; shown on an
+  OpenXR quad layer at 1.6 m.
+- **OpenXR**: loaded at run time (`libopenxr_loader.dll`), Vulkan via `XR_KHR_vulkan_enable`; `xrWaitFrame` +
+  pose after each present, frame end on the recorder thread (it owns the Vulkan queue) with the poses the frame was
+  rendered with, so the runtime's reprojection (ASW/timewarp) is correct.
+
+## Problems found and how they were solved
+
+1. **Both eyes identical** — the backend memoizes texture views per texture object per frame; swapping a texture
+   object's image for the right eye hit the memo. Fix: the swap bumps the view generation.
+2. **Menus/intros/VS screen got head tracking** (split-screen VS views stretched, cinematic cameras moving you) —
+   fixed by classifying frames by the camera signature; those go to the big screen.
+3. **HUD stretched over the whole view at infinity** — HUD redirected into its own images and panel (above).
+   Sub-problems: ARMS draws the HUD into a 1600×900 composite that is then copied to the window (so "the window
+   image" was the wrong target); the HUD's 3D ARMS icons are little renders with their own camera (handled: once the
+   HUD has begun, everything into that target is HUD); the backend's "first write clears the target" logic wiped
+   the white background (marked as written); target swaps confused the stereo check (fixed).
+4. **Crash in `vr_swap`** — a HUD image had been made stereo and later freed. HUD images are never made stereo now,
+   and freeing one cleans up defensively.
+5. **18 fps in the arena** — profiling showed descriptor-set building at ~1.9 s per 2 s. Cause: the camera block was
+   patched in place inside the transient upload ring, which is write-combined (ReBAR) memory where CPU reads are
+   very slow. Patching on the stack and copying once (plus a per-camera memo) → solid 60 fps.
+6. **Test noise** — other agents' builds/games and a leftover XR Simulator process (50% GPU) ran on the same PC at
+   times, causing unrelated slowdowns in some measurements. Simulator processes are stopped after each test.
+
+## Known issues / things to check in the headset
+
+- **World scale**: estimated (~10 game units per meter from the fighter's size and the measured parallax). If
+  fighters feel like giants or toys, change `LARECOMP_VR_SCALE` (smaller value = bigger world).
+- **Camera motion**: the game's chase camera still yaws to keep the opponent in view; that's artificial rotation.
+  Levelled horizon and head tracking help a lot, but if it makes you queasy, tell me — options are a comfort
+  vignette or yaw smoothing.
+- **Resolution**: the scene is a 16:9 render squeezed into a nearly square eye FOV, so horizontal detail is higher
+  than vertical. 2x internal resolution is the default; 3x is affordable on the 1080 Ti if it looks soft
+  (`resolution = 3x` in `larecomp-vr.ini`).
+- **Frame pacing**: the game runs at 60 fps; Link at 72/90 Hz uses reprojection between frames. `LARECOMP_VR_HZ=120`
+  makes the timing even (60 × 2) if your Link settings allow 120 Hz.
+- The desktop window mirrors the left eye (without the HUD in fights).
+
+## Building
+
+```
+cd Arms-Rearmed-vr
+make -j24 PY=.venv/Scripts/python.exe build/armsrecomp.exe     (MSYS2 UCRT64 shell)
+```
+New dependency: MSYS2 package `mingw-w64-ucrt-x86_64-openxr-sdk` (installed); `libopenxr_loader.dll` copied into
+`build/`.
+
+## Test commands (for me / later)
+
+```
+# offline (no headset): head 0° yaw, -10° pitch, ±50° FOV; save what goes to the headset at frame 6800
+LARECOMP_VR=1 LARECOMP_VR_NO_XR=1 LARECOMP_VR_FAKE_HEAD="0,-10,50" LARECOMP_VR_SHOT_AT=6800 bash build/vrtest/run.sh 130 test
+# through the Meta XR Simulator
+XR_RUNTIME_JSON="$APPDATA\metavr\tools\xrsim\meta_openxr_simulator.json" LARECOMP_VR=1 bash build/vrtest/run.sh 140 sim
+```
+Diagnostics: `LARECOMP_VR_CAMLOG=1` (scene cameras per frame), `LARECOMP_VR_DRAWLOG=<frame>` (each draw's VR kind).
+
+## Log
+
+- Stereo core; identical-eyes bug fixed; parallax measured.
+- OpenXR integration; simulator end-to-end at 60 fps.
+- Frame classification (fight / big screen); HUD panel with exact alpha; Touch input + rumble.
+- Performance fix (write-combined memory reads): immersive 18 → 60 fps.
+- Launcher `ARMS-VR.bat`, VR settings template.
