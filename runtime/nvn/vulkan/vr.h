@@ -33,6 +33,9 @@ void vr_swap(int eye);                    // every stereo texture object -> that
 
 // the scene camera's block: true when `u` (size bytes) is one; vr_patch_camera rewrites a copy for `eye`
 bool vr_is_scene_camera(const void *u, uint64_t size);
+void vr_cam_record(const float *orig, const float *patched, size_t bytes, int eye);  // (exec.c) this eye's camera
+bool vr_effect_block_has(const float *u, uint64_t bytes);  // another block holds copies of its matrices (effects)
+void vr_patch_effect(float *u, uint64_t bytes, int eye);   // those copies -> the eye's
 void vr_patch_camera(float *u, uint64_t size, int eye);
 
 // settings (LARECOMP_VR_* and the VR tab)

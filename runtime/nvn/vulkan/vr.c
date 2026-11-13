@@ -147,6 +147,78 @@ static void xr_set(float (*r)[4], int base, const float q[4], const float t[3], 
             VP[i][j] = P[i][0] * V[0][j] + P[i][1] * V[1][j] + P[i][2] * V[2][j] + (j == 3 ? P[i][3] : 0.0f);
 }
 
+// ------------------------------------------------------------------ the effects' copies of the camera
+// ARMS's effect system (hit sparks, shockwaves, confetti...) keeps its own view block (its view-projection at rows
+// 8-11 of another constant block, other layouts elsewhere): drawn with it as is, effects stayed where the flat game
+// would show them - misplaced, squeezed, confetti stuck to the head. Any constant block holding rows equal to this
+// frame's scene camera (view, view-projection, projection, inverse view, their rotations, the camera's place) gets
+// this eye's instead. Only the first 128 rows are searched (the view blocks are small; bone palettes are not).
+static float cam_orig[14][4], cam_eye[2][14][4];
+static bool cam_have[2];
+void vr_cam_record(const float *orig, const float *patched, size_t bytes, int eye) {
+    if (bytes < 14 * 16) return;
+    memcpy(cam_orig, orig, sizeof cam_orig);
+    memcpy(cam_eye[eye & 1], patched, sizeof cam_eye[0]);
+    cam_have[eye & 1] = true;
+}
+static bool feq(float a, float b) { return fabsf(a - b) <= 1e-4f * (1.0f + fabsf(b)); }
+static bool rows_eq(const float (*a)[4], const float (*b)[4], int nr, int nc) {
+    for (int i = 0; i < nr; i++)
+        for (int j = 0; j < nc; j++) if (!feq(a[i][j], b[i][j])) return false;
+    return true;
+}
+// matches in u (nrows): write = this eye's rows there; returns how many were found
+static int effect_scan(float (*u)[4], int nrows, int eye, bool write) {
+    if (!cam_have[0] && !cam_have[1]) return 0;
+    const float (*o)[4] = (const float (*)[4])cam_orig, (*e)[4] = (const float (*)[4])cam_eye[eye & 1];
+    if (!cam_have[eye & 1]) e = o;
+    int found = 0;
+    if (nrows > 128) nrows = 128;
+    for (int r = 0; r < nrows; r++) {
+        if (r + 4 <= nrows && rows_eq((const float (*)[4])(u + r), o + 3, 4, 4)) {         // view-projection
+            if (write) memcpy(u + r, e + 3, 4 * 16);
+            found++, r += 3;
+        } else if (r + 4 <= nrows && rows_eq((const float (*)[4])(u + r), o + 7, 4, 4)) {  // projection
+            if (write) memcpy(u + r, e + 7, 4 * 16);
+            found++, r += 3;
+        } else if (r + 3 <= nrows && rows_eq((const float (*)[4])(u + r), o + 0, 3, 4)) {  // view
+            if (write) memcpy(u + r, e + 0, 3 * 16);
+            found++, r += 2;
+        } else if (r + 3 <= nrows && rows_eq((const float (*)[4])(u + r), o + 11, 3, 4)) { // inverse view
+            if (write) memcpy(u + r, e + 11, 3 * 16);
+            found++, r += 2;
+        } else if (r + 3 <= nrows && (rows_eq((const float (*)[4])(u + r), o + 0, 3, 3) || rows_eq((const float (*)[4])(u + r), o + 11, 3, 3))) {
+            bool inv = !rows_eq((const float (*)[4])(u + r), o + 0, 3, 3);  // (a rotation alone: billboards)
+            if (write) for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) u[r + i][j] = e[(inv ? 11 : 0) + i][j];
+            found++, r += 2;
+        } else if (feq(u[r][0], o[11][3]) && feq(u[r][1], o[12][3]) && feq(u[r][2], o[13][3]) &&
+                   fabsf(o[11][3]) + fabsf(o[12][3]) + fabsf(o[13][3]) > 1e-3f) {          // the camera's place
+            if (write) u[r][0] = e[11][3], u[r][1] = e[12][3], u[r][2] = e[13][3];
+            found++;
+        }
+    }
+    return found;
+}
+bool vr_effect_block_has(const float *u, uint64_t bytes) {
+    float tmp[128][4];
+    int n = (int)(bytes / 16) < 128 ? (int)(bytes / 16) : 128;
+    memcpy(tmp, u, (size_t)n * 16);  // (guest memory: plain reads)
+    int f = effect_scan(tmp, n, 0, false);
+    // (a camera place alone is not enough: a matrix must be there too)
+    if (f) {
+        bool mat = false;
+        const float (*o)[4] = (const float (*)[4])cam_orig;
+        for (int r = 0; r + 3 <= n && !mat; r++)
+            mat = rows_eq((const float (*)[4])(tmp + r), o + 3, 3, 4) || rows_eq((const float (*)[4])(tmp + r), o + 0, 3, 3) ||
+                  rows_eq((const float (*)[4])(tmp + r), o + 11, 3, 3) || rows_eq((const float (*)[4])(tmp + r), o + 7, 3, 4);
+        if (!mat) return false;
+        static int nlog;
+        if (nlog++ < 6) LOG("[vr] a block with %d copies of the camera's matrices (effects): made per eye\n", f);
+    }
+    return f > 0;
+}
+void vr_patch_effect(float *u, uint64_t bytes, int eye) { effect_scan((float (*)[4])u, (int)(bytes / 16), eye, true); }
+
 void vr_patch_camera(float *u, uint64_t size, int eye) {
     float (*r)[4] = (float (*)[4])u;
     float q[4], p[3], tan[4];

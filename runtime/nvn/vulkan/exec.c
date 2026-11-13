@@ -3677,11 +3677,37 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
             memcpy(blk, (const void *)(uintptr_t)r.addr, n);
             memcpy(head, blk, hn);  // (the original's head, to see it unchanged)
             vr_patch_camera(blk, n, g_vr_eye);
+            vr_cam_record(head, blk, hn, g_vr_eye);  // (the effects' copies of these matrices follow, vr_patch_effect)
             VkSpan s = vk_transient_copy(blk, n, 256);
             memo.addr = r.addr, memo.n = n, memo.seq = seq, memo.eye = g_vr_eye, memo.gen = vr_view_gen(), memo.s = s;
             return ubo_span(s, size);
         }
+    } else if (vr_on() && r.size >= 64 && vr_stereo_frame()) {
+        // (VR, vr.c) other blocks holding copies of the scene camera's matrices (the effect system's view block: hit
+        // sparks, shockwaves, confetti): this eye's copy. A block without any is remembered per submission.
+        static struct { uint64_t addr, seq; int eye; uint32_t gen; bool has; VkSpan s; uint64_t n; } ec[64];
+        extern uint32_t vr_view_gen(void);
+        uint64_t seq = vk_pending_seq();
+        uint32_t slot = (uint32_t)((r.addr >> 4) ^ (r.addr >> 12)) & 63;
+        if (ec[slot].addr == r.addr && ec[slot].seq == seq && ec[slot].gen == vr_view_gen() && (!ec[slot].has || ec[slot].eye == g_vr_eye)) {
+            if (ec[slot].has && ec[slot].n >= size) return ubo_span(ec[slot].s, size);
+            if (!ec[slot].has) goto plain;
+        }
+        {
+            uint64_t n = size < 0x8000 ? size : 0x8000;
+            bool has = vr_effect_block_has((const float *)(uintptr_t)r.addr, n);
+            ec[slot].addr = r.addr, ec[slot].seq = seq, ec[slot].gen = vr_view_gen(), ec[slot].eye = g_vr_eye, ec[slot].has = has;
+            if (has) {
+                static _Alignas(16) float eb[0x8000 / 4];
+                memcpy(eb, (const void *)(uintptr_t)r.addr, n);
+                vr_patch_effect(eb, n, g_vr_eye);
+                VkSpan s = vk_transient_copy(eb, n, 256);
+                ec[slot].s = s, ec[slot].n = n;
+                return ubo_span(s, size);
+            }
+        }
     }
+plain:
     if (gc_lazy && si->uses_gmem && scan_once) return ubo_span(guest_copy_ex(r.addr, size, true), size);
     if (gc_lazy && si->uses_gmem) gc_scan_pointers((const uint32_t *)(uintptr_t)r.addr, size);
     return ubo_span(guest_copy(r.addr, size), size);
