@@ -205,3 +205,15 @@ Found and fixed while playing:
   damage numbers. Idea: tell these world-anchored HUD pieces apart from the fixed ones (timer, portraits) - by
   their position following the opponent's projection from frame to frame - and draw them into the eyes at the
   opponent's depth (screen position + depth -> world point -> each eye) instead of onto the panel.
+
+## Added after the first live session
+
+- **Camera modes** - the right thumbstick's press cycles them (blink + recenter): **chase** (the game's camera,
+  default), **smooth chase** (its turns smoothed), **snap turns** (turns only in 30+ degree steps with a blink),
+  **far chase** (2.5 m back, 1 m up), **stadium seat** (still, 3 m behind and 1.5 m above where the fight started -
+  no camera motion at all). `LARECOMP_VR_CAMERA` picks the one at start. Outside chase the HUD panel is fixed in
+  front of you. (R is on the left Y button.)
+- **World-anchored HUD in 3D**: HUD pieces the game places with the camera (the opponent's life bar, damage numbers)
+  are drawn into each eye at their place in the arena instead of flat on the panel.
+- **Quest button prompts**: while the Touch controllers are read, the game's prompts show A / B, RG / LG (grips),
+  X / Y (L / R), the menu button - e.g. "PRESS X + Y" on Choose your ARMS.

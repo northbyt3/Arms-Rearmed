@@ -6,7 +6,7 @@
 //   right grip     X (jump)               left grip      Y (dash)           (as the Joy-Cons' R / L in motion play)
 //   A / B          A / B (menus)          X / Y          L / R (both: "press L + R", e.g. choosing ARMS)
 //   left stick     move (and the d-pad in menus: the game reads the stick there too); its press: guard
-//   right stick    right stick; its press: R (rush)      menu button    + (pause)
+//   right stick    right stick; its press: the next VR camera mode      menu button    + (pause)
 // The game thread reads it through g_vr_buttons / g_vr_stick (runtime/hle/input.c fill_state).
 #include <math.h>
 #include <stdatomic.h>
@@ -192,7 +192,12 @@ void vr_input_sync(XrSession xs, XrSpace local, XrTime t, const XrPosef *head) {
     if (get_b(xs, A_X)) b |= 1ull << BTN_L;  // (jump / dash are on the grips)
     if (get_b(xs, A_Y)) b |= 1ull << BTN_R;
     if (get_b(xs, A_CLICK_L)) b |= 1ull << BTN_LSTICK;
-    if (get_b(xs, A_CLICK_R)) b |= 1ull << BTN_R;
+    {   // the right thumbstick's press: the next camera mode (vr.c); R is on the left Y button
+        static bool was;
+        bool now = get_b(xs, A_CLICK_R);
+        if (now && !was) { extern void vr_camera_next(void); vr_camera_next(); }
+        was = now;
+    }
     if (get_b(xs, A_MENU)) b |= 1ull << BTN_PLUS;
     XrVector2f l = get_v(xs, A_STICK_L), r = get_v(xs, A_STICK_R);
     g_vr_stick[0] = axis(l.x), g_vr_stick[1] = axis(l.y), g_vr_stick[2] = axis(r.x), g_vr_stick[3] = axis(r.y);

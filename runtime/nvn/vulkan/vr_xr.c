@@ -712,7 +712,13 @@ static XrPosef panel_pose(float dist) {  // (dist m in front of the reference, f
 // LARECOMP_VR_HUD_WIDTH=<m>: a fixed panel that size instead (smaller: easier to read, no longer lined up).
 static void hud_place(XrPosef *pose, float *w, float *h) {
     float d = g_vrs.hud_dist > 0.3f ? g_vrs.hud_dist : 1.6f;
-    if (g_vrs.hud_width > 0) {
+    extern bool vr_camera_is_game(void);
+    if (g_vrs.hud_width > 0 || !vr_camera_is_game()) {  // (a fixed panel: or the game camera isn't where the player is)
+        if (g_vrs.hud_width <= 0) {
+            *pose = panel_pose(d);
+            *w = 1.8f, *h = 1.8f * 9 / 16;
+            return;
+        }
         *pose = panel_pose(d);
         *w = g_vrs.hud_width, *h = g_vrs.hud_width * 9 / 16;
         return;
@@ -803,7 +809,8 @@ void vr_xr_present(NvnTexture *t, const float crop[4]) {
         a.immersive = scene && cur.views_ok;
         {   // switching between the big screen and the arena: a short blink (black) instead of a cut
             static int last = -1, blink;
-            if (last >= 0 && last != (int)a.immersive) blink = (int)(g_vrs.blink * 60 + 0.5f);
+            extern int g_vr_blink_req;  // (vr.c: a camera mode change, a snap turn)
+            if ((last >= 0 && last != (int)a.immersive) || g_vr_blink_req) blink = (int)(g_vrs.blink * 60 + 0.5f), g_vr_blink_req = 0;
             last = a.immersive;
             if (blink > 0) blink--, a.blank = true;
         }
