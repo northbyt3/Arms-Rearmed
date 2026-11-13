@@ -51,7 +51,9 @@ enum { R_A = 1, R_B, R_X, R_Y, R_L, R_R, R_ZL, R_ZR, R_PLUS, R_MINUS, R_HERO, R_
 enum { AR_LSTICK = 100, AR_RSTICK, AR_LS_PRESS, AR_RS_PRESS };
 // STYLE_KB: the keyboard / mouse bindings, drawn as key caps and a mouse (ARMS's icon font: runtime/nvn/texpatch.c
 // arms_sheet_apply)
-enum { STYLE_NINTENDO, STYLE_XBOX, STYLE_PS, STYLE_KB };
+// STYLE_QUEST: (VR) the Touch controllers, as runtime/nvn/vulkan/vr_input.c maps them: A / B, the grips (X jump, Y dash),
+// the left controller's X / Y (L / R), the menu button (+)
+enum { STYLE_NINTENDO, STYLE_XBOX, STYLE_PS, STYLE_KB, STYLE_QUEST };
 // labels: R_A..R_MINUS = the button that role is on by default; or these
 enum { L_LS = 32, L_RS, L_DUP, L_DDOWN, L_DLEFT, L_DRIGHT, L_OTHER };
 
@@ -460,11 +462,16 @@ static int prompt_style(void) {
     if (env == -2) {
         const char *e = getenv("LARECOMP_PROMPTS");
         env = !e ? -1 : !strcmp(e, "xbox") ? PROMPTS_XBOX : !strcmp(e, "playstation") ? PROMPTS_PLAYSTATION :
-              !strcmp(e, "nintendo") ? PROMPTS_NINTENDO : !strcmp(e, "keyboard") ? PROMPTS_KEYBOARD : PROMPTS_AUTO;
+              !strcmp(e, "nintendo") ? PROMPTS_NINTENDO : !strcmp(e, "keyboard") ? PROMPTS_KEYBOARD :
+              !strcmp(e, "quest") ? 99 : PROMPTS_AUTO;
         until = getenv("LARECOMP_PROMPTS_UNTIL") ? atol(getenv("LARECOMP_PROMPTS_UNTIL")) : -1;
     }
     extern uint64_t renderer_present_count(void);
     int p = env >= 0 && (until < 0 || (long)renderer_present_count() < until) ? env : g_settings.prompts;
+    if (p == 99) return STYLE_QUEST;
+    // (VR) the Touch controllers being read: their buttons, whatever else is plugged in
+    extern _Atomic int g_vr_input_live;
+    if (p == PROMPTS_AUTO && g_vr_input_live) return STYLE_QUEST;
     if (p == PROMPTS_XBOX) return STYLE_XBOX;
     if (p == PROMPTS_PLAYSTATION) return STYLE_PS;
     if (p == PROMPTS_NINTENDO) return STYLE_NINTENDO;
@@ -490,6 +497,7 @@ static int prompt_label(int role) {
                                   [R_R] = BIND_R, [R_ZL] = BIND_ZL, [R_ZR] = BIND_ZR, [R_PLUS] = BIND_PLUS,
                                   [R_MINUS] = BIND_MINUS};
     if (role < R_A || role > R_MINUS) return role;
+    if (prompt_style() == STYLE_QUEST) return role;  // (the Touch mapping is fixed: draw_label names it)
     switch (bind_prompt_host(slot[role])) {
     case 1 /* east */: return R_A;
     case 0 /* south */: return R_B;
@@ -877,6 +885,10 @@ static bool draw_label(int role, int style, float *cv, bool *symbol) {
         else if (role == R_X) { Seg s[3] = {{128, 30, 226, 200}, {226, 200, 30, 200}, {30, 200, 128, 30}}; draw_segs(cv, s, 3, 13); }  // north: triangle
         else draw_rect(cv, 44, 44, 212, 212, 26);  // west: square
         return true;
+    }
+    if (style == STYLE_QUEST && role <= R_ZR) {  // the Touch controllers (vr_input.c)
+        static const char *const quest[] = {"", "A", "B", "RG", "LG", "X", "Y", "LT", "RT"};
+        return draw_text(cv, quest[role]);
     }
     static const char *const xbox[] = {"", "B", "A", "Y", "X", "LB", "RB", "LT", "RT"};
     static const char *const ps[] = {"", "", "", "", "", "L1", "R1", "L2", "R2"};
