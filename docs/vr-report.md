@@ -192,3 +192,11 @@ Found and fixed while playing:
 - Live capture: create `build\vrtest\shot.req` while playing; the next frame's eyes, HUD panel and HUD renders are
   saved to `build\frames\vr_<frame>_*.png`.
 - Useful when Link's PC service isn't running ("no headset"): open the Meta Horizon Link app first.
+
+## Known issues (next session)
+
+- On the "Choose your ARMS" screen the player's health bar (bottom right, "Spring Man") shows as a black silhouette
+  instead of the translucent bar with its teal fill; in matches it looks right. Likely a blend mode the black/white
+  HUD trick doesn't recover, or the shade removal taking its translucent backing. Use `build\vrtest\shot.req` on that
+  screen to capture the HUD renders and compare.
+- Minor graphics glitches remain here and there; capture with `shot.req` when seen.
