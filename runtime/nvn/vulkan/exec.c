@@ -7646,6 +7646,9 @@ void vk_vr_hud_combine(TexBackend *a, TexBackend *b, VkImage dst_img, VkImageVie
     post_view_override = dst_view;
     float pc[8] = {crop_in[0] * fx, crop_in[1] * fy, crop_in[2] * fx, crop_in[3] * fy, (float)w, (float)h,
                    renderer_origin_lower_left() ? 1.0f : 0.0f, 0};
+    static int keep_shades = -1;  // LARECOMP_VR_HUD_SHADE=1: keep the game's full-screen dimming on the HUD panel
+    if (keep_shades < 0) keep_shades = getenv("LARECOMP_VR_HUD_SHADE") && atoi(getenv("LARECOMP_VR_HUD_SHADE"));
+    pc[7] = keep_shades ? 0.0f : 1.0f;
     post_pass(cb, "vr_hud.frag", srcs, 2, &d, pc, false);
     post_view_override = VK_NULL_HANDLE;
     vk_full_barrier(cb);
