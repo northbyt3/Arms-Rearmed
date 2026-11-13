@@ -609,10 +609,34 @@ void backend_texture_destroyed(NvnTexture *t) {
     for (size_t i = 0; i < g_share_n; i++)
         if (g_share[i] == b) { g_share[i] = g_share[--g_share_n]; break; }
     live_remove(b);
+    if (b->vr_twin) {  // (VR) the right eye's image goes with it
+        extern void vr_unregister(TexBackend *b);
+        vr_unregister(b);
+        destroy_image(b->vr_twin);
+        free(b->vr_twin);
+        b->vr_twin = NULL;
+    }
     destroy_image(b);
     free(b->pending_rgba);
     free(b->users);
     free(b);
+}
+
+// (VR, vr.c) t's right-eye image: an image like t's own (size, format, scale), made on first need. Rendered into only.
+TexBackend *vk_tex_twin(NvnTexture *t) {
+    TexBackend *b = tex_backend(t);
+    if (b->vr_is_twin) return b;  // (the right eye's translation: t points at it already)
+    if (b->vr_twin) return b->vr_twin;
+    TexBackend *w = calloc(1, sizeof *w);
+    w->scalable = b->scalable;
+    create_image(t, w);
+    w->gpu_owned = true;
+    w->vr_is_twin = true;
+    w->vr_orig = b;
+    b->vr_twin = w;
+    extern void vr_register(TexBackend *b);
+    vr_register(b);
+    return w;
 }
 
 // Reboot (device.c backend_reset; GPU idle): every game texture and its views go.

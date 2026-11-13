@@ -123,6 +123,11 @@ typedef struct TexBackend {
     struct NvnTexture **users;
     int nusers, cap_users;
     uint64_t share_key[4];  // (addr; format, target, samples, levels; width, height, depth; stride): 0 = not shared
+    // VR stereo (vr.c): a texture the scene camera draws into has a twin image, the right eye's; while the right eye's
+    // translation runs, the texture objects of a stereo image point at the twin (vr_swap)
+    struct TexBackend *vr_twin;  // (on the left eye's image) its twin
+    struct TexBackend *vr_orig;  // (on a twin) the left eye's image
+    bool vr_is_twin;
 } TexBackend;
 
 TexBackend *vk_tex(NvnTexture *t, bool for_render);  // backend image (uploads CPU contents unless for_render)

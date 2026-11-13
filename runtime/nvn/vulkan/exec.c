@@ -19,6 +19,7 @@
 #include "../../kernel.h"
 #include "shaders.h"
 #include "vk.h"
+#include "vr.h"
 #include "record.h"
 #include "../renderer.h"
 #include "../pace.h"
@@ -2762,7 +2763,8 @@ static uint64_t stat_alias_made, stat_alias_renamed, stat_alias_partial, stat_al
 
 static int copy_opt(void) {
     static int on = -1;
-    if (on < 0) { const char *e = getenv("LARECOMP_VK_COPY_OPT"); on = e && *e ? atoi(e) : 1; }
+    extern bool vr_on(void);
+    if (on < 0) { const char *e = getenv("LARECOMP_VK_COPY_OPT"); on = vr_on() ? 0 : e && *e ? atoi(e) : 1; }  // (VR: twins, no aliases)
     return on;
 }
 
@@ -3656,6 +3658,14 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
     // at every draw, as before)
     static int scan_once = -1;
     if (scan_once < 0) scan_once = getenv("LARECOMP_VK_NO_SCAN_ONCE") == NULL;
+    if (vr_on() && idx == 0 && vr_is_scene_camera((const void *)(uintptr_t)r.addr, r.size)) {
+        // (VR, vr.c) the scene camera's block, this eye's: a copy of its own (not shared with the other eye's draws)
+        uint64_t full = r.size < 50 * 16 ? r.size : 50 * 16, n = size > full ? size : full;
+        VkSpan s = vk_transient_copy((const void *)(uintptr_t)r.addr, n, 256);
+        vr_patch_camera(s.ptr, n, g_vr_eye);
+        static uint64_t npatch[2]; if ((npatch[g_vr_eye]++ % 2000) == 0) LOG("[vr] camera patch eye %d #%llu size %llu/%llu\n", g_vr_eye, (unsigned long long)npatch[g_vr_eye], (unsigned long long)size, (unsigned long long)r.size);
+        return ubo_span(s, size);
+    }
     if (gc_lazy && si->uses_gmem && scan_once) return ubo_span(guest_copy_ex(r.addr, size, true), size);
     if (gc_lazy && si->uses_gmem) gc_scan_pointers((const uint32_t *)(uintptr_t)r.addr, size);
     return ubo_span(guest_copy(r.addr, size), size);
@@ -5971,6 +5981,20 @@ static void draw_(CmdRec *r, bool indexed) {
     Prog *pr = get_program(st.program, &vkey, &fkey);
     prog_wait(pr);
     if (!pr || atomic_load(&pr->state) != 1) { SKIP(!pr ? SK_NO_STAGES : atomic_load(&pr->state) == 2 ? SK_PROG_FAILED : SK_PROG_BUILDING); return; }
+    if (vr_on()) {  // (VR, vr.c) a draw is stereo when it sees the scene camera, a stereo texture or a stereo target
+        bool stereo = false;
+        for (int s = 0; s < 2 && !stereo; s++)
+            stereo = st.ubuf[s][0].addr && vr_is_scene_camera((const void *)(uintptr_t)st.ubuf[s][0].addr, st.ubuf[s][0].size);
+        for (int i = 0; i < st.rt.ncolor && !stereo; i++) stereo = vr_tex_stereo(st.rt.color[i]);
+        if (!stereo && st.rt.depth) stereo = vr_tex_stereo(st.rt.depth);
+        for (int i = 0; i < pr->fi->ntex && !stereo; i++) stereo = vr_tex_stereo(shader_texture_object(1, &pr->fi->tex[i]));
+        for (int i = 0; i < pr->vi->ntex && !stereo; i++) stereo = vr_tex_stereo(shader_texture_object(0, &pr->vi->tex[i]));
+        if (!stereo && g_vr_eye) return;  // (mono: drawn once, in the left eye's pass - the shadow maps)
+        if (stereo && !g_vr_eye) {        // its targets are the eyes' from now on
+            for (int i = 0; i < st.rt.ncolor; i++) vr_mark(st.rt.color[i]);
+            vr_mark(st.rt.depth);
+        }
+    }
     g_mirror_w = 0;
     {   // mirror mode (runtime/hle/mirror.c; as renderer.m): the scene's composite into the window image is mirrored
         extern bool mirror_draw(bool composite);
@@ -7626,8 +7650,9 @@ static void exec_list(uint64_t handle, int depth) {
         case CMD_SET_PRIMITIVE_RESTART: st.prim_restart = r->x[0] != 0; st.restart_index = (uint32_t)r->x[1]; break;
         case CMD_SET_COPY_STRIDES: st.copy_row_stride = r->x[0]; st.copy_image_stride = r->x[1]; break;
         case CMD_CLEAR_COLOR: {
-            snap_reason = "clear-color"; snapshots_invalidate(NULL);
             int index = (int)r->x[0];
+            if (g_vr_eye && !(index < st.rt.ncolor && vr_tex_stereo(st.rt.color[index]))) break;  // (VR: mono targets once)
+            snap_reason = "clear-color"; snapshots_invalidate(NULL);
             if (getenv("LARECOMP_LOG_CLEARS") && index < st.rt.ncolor && st.rt.color[index])
                 LOG("[cclear] frame %llu idx %d %ux%u f%#x mask %#x\n", (unsigned long long)renderer_present_count(), index,
                     st.rt.color[index]->width, st.rt.color[index]->height, st.rt.color[index]->format, (uint32_t)r->x[2]);
@@ -7642,7 +7667,7 @@ static void exec_list(uint64_t handle, int depth) {
             // ClearTexture(cmd, texture, view, region, color, mask): a render-target clear of the texture alone (renderer.m)
             const struct { uint64_t tex; NvnTextureView view; uint8_t has_view; int32_t region[6]; float color[4]; } *ct = x;
             NvnTexture *t = (NvnTexture *)(uintptr_t)ct->tex;
-            if (!t) break;
+            if (!t || (g_vr_eye && !vr_tex_stereo(t))) break;
             snap_reason = "clear-texture"; snapshots_invalidate(NULL);
             alias_before_write(t, 0, "clear");
             RtState saved = st.rt;
@@ -7665,6 +7690,7 @@ static void exec_list(uint64_t handle, int depth) {
             break;
         }
         case CMD_CLEAR_DEPTH_STENCIL:
+            if (g_vr_eye && !vr_tex_stereo(st.rt.depth)) break;
             snap_reason = "clear-depth"; snapshots_invalidate(NULL);
             if (ct_on() && st.rt.depth)
                 LOG("[ct] clear-depth %p d%d s%d sc %d %d %d %d\n", (void *)st.rt.depth, r->x[0] != 0, r->x[2] != 0, st.scissor[0][0],
@@ -7692,7 +7718,7 @@ static void exec_list(uint64_t handle, int depth) {
                 clear(-1, 0, NULL, 0, r->x[0] != 0, r->f[0], has_stencil && r->x[2] != 0, (uint32_t)r->x[1], (uint32_t)r->x[2]);
             }
             break;
-        case CMD_DISPATCH: dispatch_compute((uint32_t)r->x[0], (uint32_t)r->x[1], (uint32_t)r->x[2]); break;
+        case CMD_DISPATCH: if (!g_vr_eye) dispatch_compute((uint32_t)r->x[0], (uint32_t)r->x[1], (uint32_t)r->x[2]); break;
         case CMD_DRAW_ARRAYS: draw(r, false); break;
         case CMD_DRAW_ELEMENTS: draw(r, true); break;
         case CMD_DRAW_ARRAYS_INDIRECT: draw_indirect(r, false); break;
@@ -7717,6 +7743,7 @@ static void exec_list(uint64_t handle, int depth) {
         case CMD_REPORT_COUNTER: {
             // The game times its GPU work with these (two per frame) and drops to 30 fps when that looks slow: the
             // host clock now, replaced by the GPU's time at this point once the submission is done (cq_resolve).
+            if (g_vr_eye) break;  // (VR: the left eye's pass reports)
             note_observable();
             uint64_t *out = (uint64_t *)(uintptr_t)r->x[1];
             uint32_t type = (uint32_t)r->x[0];
@@ -7755,16 +7782,29 @@ static void exec_list(uint64_t handle, int depth) {
             }
             break;
         }
-        case CMD_COPY_TEXTURE_TO_TEXTURE: { const TexRefRec *t = x; copy_texture(&t[0], &t[1], r->x[6]); break; }
-        case CMD_DOWNSAMPLE: { const TexRefRec *t = x; copy_texture(&t[0], &t[1], 1); break; }
-        case CMD_COPY_BUFFER_TO_TEXTURE: copy_buffer_to_texture(r->x[0], x); break;
-        case CMD_COPY_TEXTURE_TO_BUFFER: copy_texture_to_buffer(x, r->x[3]); break;
+        case CMD_COPY_TEXTURE_TO_TEXTURE: case CMD_DOWNSAMPLE: {
+            const TexRefRec *t = x;
+            if (vr_on()) {  // (VR: a copy of a stereo image is stereo; the right eye's pass copies stereo images only)
+                NvnTexture *s0 = (NvnTexture *)(uintptr_t)t[0].tex, *d0 = (NvnTexture *)(uintptr_t)t[1].tex;
+                if (!g_vr_eye && vr_tex_stereo(s0)) vr_mark(d0);
+                if (g_vr_eye && !vr_tex_stereo(s0) && !vr_tex_stereo(d0)) break;
+            }
+            copy_texture(&t[0], &t[1], r->op == CMD_DOWNSAMPLE ? 1 : r->x[6]);
+            break;
+        }
+        case CMD_COPY_BUFFER_TO_TEXTURE:
+            if (g_vr_eye && !vr_tex_stereo((NvnTexture *)(uintptr_t)((const TexRefRec *)x)->tex)) break;
+            copy_buffer_to_texture(r->x[0], x);
+            break;
+        case CMD_COPY_TEXTURE_TO_BUFFER: if (!g_vr_eye) copy_texture_to_buffer(x, r->x[3]); break;
         case CMD_COPY_BUFFER_TO_BUFFER:
+            if (g_vr_eye) break;  // (VR: CPU-side commands run in the left eye's pass only)
             wait_why = "buffer -> buffer copy";
             renderer_flush();
             memmove((void *)(uintptr_t)r->x[1], (void *)(uintptr_t)r->x[0], r->x[2]);
             break;
         case CMD_SIGNAL_EVENT: {  // SignalEvent(event, mode, location, flags, value): mode 0 writes the value, 1 adds it
+            if (g_vr_eye) break;
             uint32_t *ev = (uint32_t *)(uintptr_t)*(uint64_t *)(uintptr_t)r->x[0];  // (Event@0: its storage address)
             static int nlog;
             if (nlog++ < 12) LOG("[nvn] SignalEvent %p mode %llu location %llu flags %llx value %llu (was %u)\n", (void *)ev, (unsigned long long)r->x[1],
@@ -7775,6 +7815,7 @@ static void exec_list(uint64_t handle, int depth) {
             break;
         }
         case CMD_CLEAR_BUFFER: {  // ClearBuffer(dst, size, value): the 32-bit value over the range (as the copies: CPU)
+            if (g_vr_eye) break;
             static int nlog = -1;
             if (nlog < 0) nlog = getenv("LARECOMP_LOG_INDIRECT") ? 0 : 1 << 30;
             if (nlog < 16) { nlog++; LOG("[nvn] ClearBuffer %llx size %llx value %llx\n", (unsigned long long)r->x[0], (unsigned long long)r->x[1], (unsigned long long)r->x[2]); }
@@ -7794,7 +7835,25 @@ static void exec_list(uint64_t handle, int depth) {
 
 void backend_execute(uint64_t handle) {
     PROF_T0();
-    exec_list(handle, 0);
+    if (vr_on()) {  // (VR, vr.c) the list twice: the left eye, then the right one with every stereo texture's twin
+        __typeof__(st) start = st;
+        g_vr_eye = 0;
+        exec_list(handle, 0);
+        vk_end_pass();
+        __typeof__(st) left_end = st;
+        st = start;
+        st.rt_dirty = true;
+        vr_swap(1);
+        g_vr_eye = 1;
+        exec_list(handle, 0);
+        vk_end_pass();
+        vr_swap(0);
+        g_vr_eye = 0;
+        st = left_end;
+        st.rt_dirty = true;
+    } else {
+        exec_list(handle, 0);
+    }
     PROF_ADD(prof_exec);
     if (prof) cum_exec += SDL_GetTicksNS() - prof_t0_;
     static int sync_submit = -1;

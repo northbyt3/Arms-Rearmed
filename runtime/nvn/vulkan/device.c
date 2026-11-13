@@ -1108,6 +1108,10 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
                 char path[256];
                 snprintf(path, sizeof path, "build/frames/frame_%05llu.png", (unsigned long long)frame);
                 renderer_save_texture_tex(b, path);
+                if (b && b->vr_twin) {  // (VR) the right eye's image beside it
+                    snprintf(path, sizeof path, "build/frames/frame_%05llu_R.png", (unsigned long long)frame);
+                    renderer_save_texture_tex(b->vr_twin, path);
+                }
             }
             if (*next == ',') next++;
         }
