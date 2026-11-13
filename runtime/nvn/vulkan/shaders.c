@@ -342,35 +342,26 @@ static const char *builtin_src(const char *name, int *stage) {
     if (!strcmp(name, "vr_hud.frag")) {  // (VR) the HUD over black (t0) and over white (t1) -> premultiplied colour + alpha
         *stage = STAGE_FRAGMENT;          // a = the part to show (uv origin, size), b = (output size, flip y, drop shades)
         // Shades: the game dims the whole screen under some menus ("Choose your ARMS", pause) with a dark translucent
-        // layer - on the TV it darkens everything, on the panel it is a grey box hanging in the arena. With b.w set, a
-        // dark pixel whose surroundings (12 and 28 pixels away) are as dark and as covered is such a layer: dropped.
-        // (Black text and outlines are thin: their surroundings differ, they stay.)
+        // layer - on the TV it darkens everything, on the panel it is a grey box hanging in the arena; its soft drop
+        // shadows hang there too. With b.w set, a dark pixel that is not fully opaque is such a layer: dropped (with a
+        // soft edge). Solid black (outlines, black text) stays. (Per pixel: a test of the surroundings left bands of
+        // shadow the shape of each element, offset - the doubles seen in the headset.)
         return "#version 450\n"
                "layout(set = 0, binding = 0) uniform sampler2D t0;\n"
                "layout(set = 0, binding = 1) uniform sampler2D t1;\n"
                "layout(push_constant) uniform P { vec4 a; vec4 b; } p;\n"
                "layout(location = 0) out vec4 o;\n"
-               "vec4 at(vec2 uv) {\n"
-               "  vec3 k = texture(t0, uv).rgb, w = texture(t1, uv).rgb;\n"
-               "  float a = clamp(1.0 - max(max(w.r - k.r, w.g - k.g), w.b - k.b), 0.0, 1.0);\n"
-               "  return vec4(min(k, vec3(a)), a);\n"
-               "}\n"
-               "bool shade(vec4 c) { return c.a > 0.02 && max(max(c.r, c.g), c.b) < 0.06 * c.a + 0.01; }\n"
                "void main() {\n"
                "  vec2 f = gl_FragCoord.xy / p.b.xy;\n"
                "  if (p.b.z > 0.5) f.y = 1.0 - f.y;\n"
                "  vec2 uv = p.a.xy + f * p.a.zw;\n"
-               "  vec4 c = at(uv);\n"
-               "  if (p.b.w > 0.5 && shade(c)) {\n"
-               "    vec2 px = p.a.zw / p.b.xy;\n"
-               "    bool flat_ = true;\n"
-               "    for (int i = 0; i < 8 && flat_; i++) {\n"
-               "      float r = i < 4 ? 12.0 : 28.0;\n"
-               "      vec2 d = vec2(i % 2 == 0 ? 1.0 : -1.0, (i / 2) % 2 == 0 ? 1.0 : -1.0) * r * px;\n"
-               "      vec4 n = at(uv + d);\n"
-               "      flat_ = shade(n) && abs(n.a - c.a) < 0.12;\n"
-               "    }\n"
-               "    if (flat_) c = vec4(0.0);\n"
+               "  vec3 k = texture(t0, uv).rgb, w = texture(t1, uv).rgb;\n"
+               "  float a = clamp(1.0 - max(max(w.r - k.r, w.g - k.g), w.b - k.b), 0.0, 1.0);\n"
+               "  vec4 c = vec4(min(k, vec3(a)), a);\n"
+               "  if (p.b.w > 0.5 && a > 0.002) {\n"
+               "    float lum = max(max(c.r, c.g), c.b) / a;\n"   // (its own colour's brightness)
+               "    float dark = 1.0 - smoothstep(0.06, 0.14, lum), clear = 1.0 - smoothstep(0.96, 0.995, a);\n"
+               "    c *= 1.0 - dark * clear;\n"
                "  }\n"
                "  o = c.a > 0.002 ? vec4(min(c.rgb / c.a, vec3(1.0)), c.a) : vec4(0.0);\n"  // (straight alpha: the
                // headset's sRGB swapchain is decoded before blending, premultiplied gamma-space colour came out dark)
