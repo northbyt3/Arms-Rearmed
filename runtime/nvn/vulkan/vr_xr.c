@@ -42,7 +42,7 @@ static PFN_xrGetInstanceProcAddr xr_gipa;
 #define XR_FUNCS(X) \
     X(xrGetSystem) X(xrGetSystemProperties) X(xrGetInstanceProperties) X(xrResultToString) X(xrStringToPath) \
     X(xrGetVulkanInstanceExtensionsKHR) X(xrGetVulkanDeviceExtensionsKHR) X(xrGetVulkanGraphicsDeviceKHR) \
-    X(xrGetVulkanGraphicsRequirementsKHR) X(xrEnumerateViewConfigurationViews) X(xrCreateSession) X(xrDestroySession) \
+    X(xrGetVulkanGraphicsRequirementsKHR) X(xrEnumerateViewConfigurationViews) X(xrCreateSession) X(xrDestroySession) X(xrDestroyInstance) \
     X(xrCreateReferenceSpace) X(xrEnumerateSwapchainFormats) X(xrCreateSwapchain) X(xrEnumerateSwapchainImages) \
     X(xrPollEvent) X(xrBeginSession) X(xrEndSession) X(xrRequestExitSession) X(xrWaitFrame) X(xrBeginFrame) \
     X(xrEndFrame) X(xrLocateViews) X(xrAcquireSwapchainImage) X(xrWaitSwapchainImage) X(xrReleaseSwapchainImage) \
@@ -107,6 +107,59 @@ static bool has_xr_ext(const XrExtensionProperties *e, uint32_t n, const char *n
     return false;
 }
 
+// The instance and the headset's system (wait_s: seconds to wait for the headset; 0: one try, quietly). Also after a
+// lost session (Link dropped): the Vulkan instance and device made for the first one serve again (same GPU).
+static const char *inst_want[8];
+static uint32_t inst_nwant;
+static bool instance_make(int wait_s) {
+    XrInstanceCreateInfo ci = {XR_TYPE_INSTANCE_CREATE_INFO};
+    strcpy(ci.applicationInfo.applicationName, "ARMS Rearmed VR");
+    strcpy(ci.applicationInfo.engineName, "LARecomp");
+    ci.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
+    ci.enabledExtensionCount = inst_nwant;
+    ci.enabledExtensionNames = inst_want;
+    if (pxrCreateInstance(&ci, &xi) != XR_SUCCESS) { xi = XR_NULL_HANDLE; return false; }
+#define XR_GET(f) xr_gipa(xi, #f, (PFN_xrVoidFunction *)&p##f);
+    XR_FUNCS(XR_GET)
+    if (have_refresh) {
+        xr_gipa(xi, "xrEnumerateDisplayRefreshRatesFB", (PFN_xrVoidFunction *)&pxrEnumerateDisplayRefreshRatesFB);
+        xr_gipa(xi, "xrRequestDisplayRefreshRateFB", (PFN_xrVoidFunction *)&pxrRequestDisplayRefreshRateFB);
+    }
+    XrInstanceProperties ip = {XR_TYPE_INSTANCE_PROPERTIES};
+    pxrGetInstanceProperties(xi, &ip);
+    if (wait_s) LOG("[vr] OpenXR runtime: %s %u.%u.%u\n", ip.runtimeName, XR_VERSION_MAJOR(ip.runtimeVersion),
+                    XR_VERSION_MINOR(ip.runtimeVersion), XR_VERSION_PATCH(ip.runtimeVersion));
+    XrSystemGetInfo gi = {XR_TYPE_SYSTEM_GET_INFO, NULL, XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY};
+    XrResult r = XR_SUCCESS;
+    for (int i = 0; i <= wait_s * 2; i++) {
+        r = pxrGetSystem(xi, &gi, &xsys);
+        if (r != XR_ERROR_FORM_FACTOR_UNAVAILABLE || !wait_s) break;
+        if (i == 0) LOG("[vr] waiting for the headset (put it on / connect Link)...\n");
+#ifdef _WIN32
+        Sleep(500);
+#endif
+    }
+    if (r != XR_SUCCESS) {
+        if (wait_s) XR_OK(r), LOG("[vr] no headset: stereo on the desktop only\n");
+        pxrDestroyInstance(xi);
+        xi = XR_NULL_HANDLE;
+        return false;
+    }
+    XrSystemProperties sp = {XR_TYPE_SYSTEM_PROPERTIES};
+    pxrGetSystemProperties(xi, xsys, &sp);
+    snprintf(sys_name, sizeof sys_name, "%s", sp.systemName);
+    uint32_t nv = 0;
+    for (int i = 0; i < 2; i++) vcv[i].type = XR_TYPE_VIEW_CONFIGURATION_VIEW;
+    if (!XR_OK(pxrEnumerateViewConfigurationViews(xi, xsys, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 2, &nv, vcv)) || nv != 2) {
+        pxrDestroyInstance(xi);
+        xi = XR_NULL_HANDLE;
+        return false;
+    }
+    LOG("[vr] headset: %s, eye images %ux%u recommended (max %ux%u)\n", sys_name, vcv[0].recommendedImageRectWidth,
+        vcv[0].recommendedImageRectHeight, vcv[0].maxImageRectWidth, vcv[0].maxImageRectHeight);
+    return true;
+}
+
 static void xr_start(void) {
     if (xr_state >= 0) return;
     xr_state = 0;
@@ -135,44 +188,10 @@ static void xr_start(void) {
     have_refresh = has_xr_ext(ep, n, XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
     if (have_refresh) want[nw++] = XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME;
     free(ep);
-    XrInstanceCreateInfo ci = {XR_TYPE_INSTANCE_CREATE_INFO};
-    strcpy(ci.applicationInfo.applicationName, "ARMS Rearmed VR");
-    strcpy(ci.applicationInfo.engineName, "LARecomp");
-    ci.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
-    ci.enabledExtensionCount = nw;
-    ci.enabledExtensionNames = want;
-    if (!XR_OK(pxrCreateInstance(&ci, &xi))) return;
-#define XR_GET(f) xr_gipa(xi, #f, (PFN_xrVoidFunction *)&p##f);
-    XR_FUNCS(XR_GET)
-    if (have_refresh) {
-        xr_gipa(xi, "xrEnumerateDisplayRefreshRatesFB", (PFN_xrVoidFunction *)&pxrEnumerateDisplayRefreshRatesFB);
-        xr_gipa(xi, "xrRequestDisplayRefreshRateFB", (PFN_xrVoidFunction *)&pxrRequestDisplayRefreshRateFB);
-    }
-    XrInstanceProperties ip = {XR_TYPE_INSTANCE_PROPERTIES};
-    pxrGetInstanceProperties(xi, &ip);
-    LOG("[vr] OpenXR runtime: %s %u.%u.%u\n", ip.runtimeName, XR_VERSION_MAJOR(ip.runtimeVersion), XR_VERSION_MINOR(ip.runtimeVersion),
-        XR_VERSION_PATCH(ip.runtimeVersion));
+    memcpy(inst_want, want, sizeof want);
+    inst_nwant = nw;
     // The headset: Link may still be connecting; LARECOMP_VR_WAIT=<seconds> (default 20) to wait for it
-    XrSystemGetInfo gi = {XR_TYPE_SYSTEM_GET_INFO, NULL, XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY};
-    int wait_s = getenv("LARECOMP_VR_WAIT") ? atoi(getenv("LARECOMP_VR_WAIT")) : 20;
-    XrResult r = XR_SUCCESS;
-    for (int i = 0; i <= wait_s * 2; i++) {
-        r = pxrGetSystem(xi, &gi, &xsys);
-        if (r != XR_ERROR_FORM_FACTOR_UNAVAILABLE) break;
-        if (i == 0) LOG("[vr] waiting for the headset (put it on / connect Link)...\n");
-#ifdef _WIN32
-        Sleep(500);
-#endif
-    }
-    if (!XR_OK(r)) { LOG("[vr] no headset: stereo on the desktop only\n"); return; }
-    XrSystemProperties sp = {XR_TYPE_SYSTEM_PROPERTIES};
-    pxrGetSystemProperties(xi, xsys, &sp);
-    snprintf(sys_name, sizeof sys_name, "%s", sp.systemName);
-    uint32_t nv = 0;
-    for (int i = 0; i < 2; i++) vcv[i].type = XR_TYPE_VIEW_CONFIGURATION_VIEW;
-    if (!XR_OK(pxrEnumerateViewConfigurationViews(xi, xsys, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 2, &nv, vcv)) || nv != 2) return;
-    LOG("[vr] headset: %s, eye images %ux%u recommended (max %ux%u)\n", sys_name, vcv[0].recommendedImageRectWidth,
-        vcv[0].recommendedImageRectHeight, vcv[0].maxImageRectWidth, vcv[0].maxImageRectHeight);
+    if (!instance_make(getenv("LARECOMP_VR_WAIT") ? atoi(getenv("LARECOMP_VR_WAIT")) : 20)) return;
     uint32_t len = 0;
     if (!XR_OK(pxrGetVulkanInstanceExtensionsKHR(xi, xsys, sizeof inst_ext_buf, &len, inst_ext_buf))) return;
     xr_state = 1;
@@ -391,6 +410,37 @@ static void set_refresh(void) {
     if (g_vrs.hz > 0) XR_OK(pxrRequestDisplayRefreshRateFB(xs, g_vrs.hz));
 }
 
+// ---- the headset lost (Link dropped, the session closed from the Meta menu): everything OpenXR made goes, with our
+// images; vr_xr_frame_next tries again every two seconds, quietly, and the game goes back into the headset.
+static bool lost;
+static int lost_wait;
+static TexBackend mb_eye, mb_hud, mb_out;  // (the mirror's views of our images: forgotten with them)
+static void session_teardown(void) {
+    rec_drain();
+    vkQueueWaitIdle(g_vk.queue);  // (the recorder is idle: the queue is ours a moment)
+    extern void vk_views_forget(TexBackend *b);
+    vk_views_forget(&mb_eye);
+    vk_views_forget(&mb_hud);
+    for (int i = 0; i < CH_N; i++) {
+        Chain *c = &ch[i];
+        if (c->n && r_pool) vkFreeCommandBuffers(g_vk.dev, r_pool, c->n, c->copy);
+        if (c->own_view) vkDestroyImageView(g_vk.dev, c->own_view, NULL);
+        if (c->own) vmaDestroyImage(g_vk.vma, c->own, c->own_mem);
+        memset(c, 0, sizeof *c);
+    }
+    if (r_pool) vkDestroyCommandPool(g_vk.dev, r_pool, NULL);
+    r_pool = VK_NULL_HANDLE;
+    if (xi) pxrDestroyInstance(xi);  // (its session, swapchains, spaces and actions go with it)
+    xi = XR_NULL_HANDLE, xs = XR_NULL_HANDLE, space_local = space_view = XR_NULL_HANDLE;
+    running = false;
+    xstate = XR_SESSION_STATE_UNKNOWN;
+    session_failed = false;
+    extern void vr_input_reset(void);
+    vr_input_reset();
+    lost = true;
+    lost_wait = 0;
+}
+
 static void poll_events(void) {
     XrEventDataBuffer ev = {XR_TYPE_EVENT_DATA_BUFFER};
     while (pxrPollEvent(xi, &ev) == XR_SUCCESS) {
@@ -406,11 +456,15 @@ static void poll_events(void) {
                 XR_OK(pxrEndSession(xs));
                 running = false;
             } else if (xstate == XR_SESSION_STATE_EXITING || xstate == XR_SESSION_STATE_LOSS_PENDING) {
-                running = false;
-                LOG("[vr] the headset session ended: desktop only from here\n");
+                LOG("[vr] the headset session ended (%s): the desktop until it is back\n",
+                    xstate == XR_SESSION_STATE_EXITING ? "closed" : "lost: Link dropped?");
+                session_teardown();
+                return;
             }
         } else if (ev.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
-            running = false;
+            LOG("[vr] the OpenXR runtime is going away: the desktop until it is back\n");
+            session_teardown();
+            return;
         } else if (ev.type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
             extern void vr_input_profile_changed(void);
             vr_input_profile_changed();
@@ -492,6 +546,15 @@ uint32_t vr_view_gen(void) { return view_gen; }
 void vr_xr_frame_next(void) {
     fake_init();
     view_gen++;
+    if (lost) {  // (every ~2 s: the headset back?)
+        cur.waited = cur.views_ok = false;
+        if (++lost_wait < 120) return;
+        lost_wait = 0;
+        if (!instance_make(0)) return;
+        lost = false;
+        LOG("[vr] the headset is back: reconnecting\n");
+        recenter_req = true;
+    }
     if (xr_state <= 0) return;
     session_make();
     if (!xs) return;
@@ -640,12 +703,11 @@ static void hud_place(XrPosef *pose, float *w, float *h) {
 // ---- the desktop's mirror: what the left eye sees (the HUD panel drawn where it appears), letterboxed in the window
 static Chain mirror;  // (only its own image)
 static bool mirror_ready;
-static TexBackend mb_eye, mb_hud, mb_out;  // (views of our images, for the drawing helpers)
 static TexBackend wrap(VkImage img, uint32_t w, uint32_t h) {
     return (TexBackend){.image = img, .format = VK_FORMAT_R8G8B8A8_UNORM, .width = w, .height = h, .depth = 1, .layers = 1,
                         .levels = 1, .samples = 1, .aspect = VK_IMAGE_ASPECT_COLOR_BIT, .sx = 1, .sy = 1, .ax = 1, .ay = 1};
 }
-void vk_vr_mirror(TexBackend *eye, TexBackend *hud, TexBackend *dst, const float rect[4]);
+void vk_vr_mirror(TexBackend *eye, TexBackend *hud, TexBackend *dst, const float rect[4], bool dark);
 static void mirror_make(const void *end_args);
 TexBackend *vr_mirror_take(void) {
     bool r = mirror_ready;
@@ -736,7 +798,7 @@ void vr_xr_present(NvnTexture *t, const float crop[4]) {
                 a.panel = true;
                 hud_place(&a.panel_pose, &a.panel_w, &a.panel_h);
             }
-            mirror_make(a.panel ? &a : NULL);
+            mirror_make(&a);
         } else {  // a menu, a loading screen, a cutscene: the picture on a big screen
             TexBackend *ha, *hb;
             vr_hud_take(&ha, &hb);
@@ -744,6 +806,7 @@ void vr_xr_present(NvnTexture *t, const float crop[4]) {
             a.panel = true;
             a.panel_pose = panel_pose(g_vrs.panel_dist);
             a.panel_w = g_vrs.panel_width, a.panel_h = g_vrs.panel_width * 9 / 16;
+            mirror_make(&a);  // (the screen as the left eye sees it, in the dark)
         }
         renderer_submit();
         // LARECOMP_VR_SHOT_AT=<present>,...: what goes to the headset that frame -> build/frames/vr_N_{L,R,panel}.png
@@ -793,7 +856,7 @@ void vr_xr_quit(void) {
 
 // (the present, after the eyes and the HUD panel are drawn) the mirror from them
 static void mirror_make(const void *end_args) {
-    const EndArgs *a = end_args;  // (NULL: no HUD panel this frame)
+    const EndArgs *a = end_args;  // (immersive: the left eye's picture with the HUD panel; else the big screen in the dark)
     if (own_fmt != VK_FORMAT_R8G8B8A8_UNORM || !ch[CH_LEFT].own) return;
     if (!mirror.own) {
         mirror.w = ch[CH_LEFT].w, mirror.h = ch[CH_LEFT].h;
@@ -811,7 +874,7 @@ static void mirror_make(const void *end_args) {
     mb_out = wrap(mirror.own, mirror.w, mirror.h);
     float rect[4] = {0, 0, 0, 0};
     bool hud = false;
-    if (a && a->panel) {  // the panel's corners seen from the left eye
+    if (a->panel && (cur.views_ok || fake_views)) {  // the panel's corners seen from the left eye
         const XrView *v = &cur.view[0];
         XrQuaternionf inv = {-v->pose.orientation.x, -v->pose.orientation.y, -v->pose.orientation.z, v->pose.orientation.w};
         float tl = tanf(v->fov.angleLeft), tr = tanf(v->fov.angleRight), tu = tanf(v->fov.angleUp), td = tanf(v->fov.angleDown);
@@ -830,6 +893,7 @@ static void mirror_make(const void *end_args) {
         }
         rect[0] = u0, rect[1] = v0, rect[2] = u1, rect[3] = v1;
     }
-    vk_vr_mirror(&mb_eye, hud ? &mb_hud : NULL, &mb_out, rect);
+    if (!a->immersive && !hud) return;  // (nothing to show: the desktop shows the game's picture)
+    vk_vr_mirror(&mb_eye, hud ? &mb_hud : NULL, &mb_out, rect, !a->immersive);
     mirror_ready = true;
 }

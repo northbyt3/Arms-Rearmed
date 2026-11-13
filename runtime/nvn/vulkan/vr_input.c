@@ -127,6 +127,17 @@ void vr_input_attach(XrInstance xi, XrSession xs, PFN_xrGetInstanceProcAddr gipa
     LOG("[vr] Touch controllers: %s\n", attached ? "bound (triggers punch, grips dash / jump, left stick press guards)" : "attach failed");
 }
 
+// (vr_xr.c: the session lost) its actions went with it
+void vr_input_reset(void) {
+    attached = false;
+    set = XR_NULL_HANDLE;
+    memset(act, 0, sizeof act);
+    pose_space[0] = pose_space[1] = XR_NULL_HANDLE;
+    g_vr_buttons = 0;
+    for (int i = 0; i < 4; i++) g_vr_stick[i] = 0;
+    g_vr_input_live = 0;
+}
+
 void vr_input_profile_changed(void) { LOG("[vr] controllers changed\n"); }
 
 static float get_f(XrSession xs, int a) {

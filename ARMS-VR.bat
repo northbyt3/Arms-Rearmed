@@ -24,6 +24,8 @@ set LARECOMP_VR=1
 set LARECOMP_DATA_ROOT=%~dp0
 set LARECOMP_SETTINGS=%~dp0larecomp-vr.ini
 set LARECOMP_SAVE_DIR=%~dp0save-vr
+rem (waits up to a minute for the headset at start; after a Link drop the game reconnects by itself)
+set LARECOMP_VR_WAIT=60
 
 rem ---- VR options (remove "rem" to use one) ----
 rem World scale: game units per meter (default 10). Bigger = the world looks smaller.

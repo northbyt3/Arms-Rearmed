@@ -330,7 +330,7 @@ static const char *builtin_src(const char *name, int *stage) {
                "layout(location = 0) out vec4 o;\n"
                "void main() {\n"
                "  vec2 f = gl_FragCoord.xy / p.b.xy;\n"
-               "  vec3 c = texture(t0, f).rgb;\n"
+               "  vec3 c = p.b.w > 0.5 ? vec3(0.0) : texture(t0, f).rgb;\n"
                "  if (p.b.z > 0.5 && f.x >= p.a.x && f.x <= p.a.z && f.y >= p.a.y && f.y <= p.a.w) {\n"
                "    vec4 h = texture(t1, (f - p.a.xy) / (p.a.zw - p.a.xy));\n"
                "    c = c * (1.0 - h.a) + h.rgb;\n"

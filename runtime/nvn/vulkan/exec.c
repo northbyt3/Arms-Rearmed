@@ -7625,11 +7625,11 @@ void vk_vr_eye(TexBackend *b, VkImageView dst_view, uint32_t w, uint32_t h, cons
 
 // (VR, vr_xr.c) the desktop's mirror: the left eye's picture with the HUD panel (premultiplied, may be NULL) in the
 // rectangle rect (uv x0 y0 x1 y1 of the eye) - all images of vr_xr.c's (RGBA8 UNORM, GENERAL)
-void vk_vr_mirror(TexBackend *eye, TexBackend *hud, TexBackend *dst, const float rect[4]) {
+void vk_vr_mirror(TexBackend *eye, TexBackend *hud, TexBackend *dst, const float rect[4], bool dark) {
     vk_end_pass();
     VkCommandBuffer cb = vk_cmd();
     VkImageView srcs[2] = {raw_view(eye), raw_view(hud ? hud : eye)};
-    float pc[8] = {rect[0], rect[1], rect[2], rect[3], (float)dst->width, (float)dst->height, hud ? 1.0f : 0.0f, 0};
+    float pc[8] = {rect[0], rect[1], rect[2], rect[3], (float)dst->width, (float)dst->height, hud ? 1.0f : 0.0f, dark ? 1.0f : 0.0f};
     post_pass(cb, "vr_mirror.frag", srcs, 2, dst, pc, false);
     vk_full_barrier(cb);
 }
