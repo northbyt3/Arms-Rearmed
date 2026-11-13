@@ -558,7 +558,12 @@ static void poll_events(void) {
             extern void vr_input_profile_changed(void);
             vr_input_profile_changed();
         } else if (ev.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
-            LOG("[vr] recentered\n");
+            // the Meta button held (the system's recenter): LOCAL moves under us - once it has, our reference
+            // starts over from the head too, or it would undo the recenter (vr_xr_frame_next)
+            const XrEventDataReferenceSpaceChangePending *rc = (const XrEventDataReferenceSpaceChangePending *)&ev;
+            extern void vr_xr_recenter_at(XrTime t);
+            if (rc->referenceSpaceType == XR_REFERENCE_SPACE_TYPE_LOCAL) vr_xr_recenter_at(rc->changeTime);
+            LOG("[vr] the headset's recenter (Meta button)\n");
         }
         ev = (XrEventDataBuffer){XR_TYPE_EVENT_DATA_BUFFER};
     }
@@ -605,8 +610,16 @@ static void fake_init(void) {
 // heading then become the reference - the fight starts in front of the player, the screens appear where they look.
 // The eyes go to the camera relative to it; the panels are placed by it. LARECOMP_VR_AUTO_RECENTER=0: LOCAL as is.
 static XrPosef ref = {{0, 0, 0, 1}, {0, 0, 0}};
-static bool recenter_req = true;
+static bool recenter_req = true, recenter_user;
+static XrTime recenter_after;  // (the system's recenter: once LOCAL has changed)
 void vr_xr_recenter(void) { recenter_req = true; }
+// The player asked (the menu button held, the Meta button held): always, with a short blink in the arena
+void vr_xr_recenter_user(void) {
+    extern int g_vr_blink_req;
+    recenter_req = recenter_user = true;
+    g_vr_blink_req = 1;
+}
+void vr_xr_recenter_at(XrTime t) { recenter_after = t ? t : 1; }
 static XrVector3f qrot(XrQuaternionf q, XrVector3f v) {  // v rotated by q
     float tx = 2 * (q.y * v.z - q.z * v.y), ty = 2 * (q.z * v.x - q.x * v.z), tz = 2 * (q.x * v.y - q.y * v.x);
     return (XrVector3f){v.x + q.w * tx + (q.y * tz - q.z * ty), v.y + q.w * ty + (q.z * tx - q.x * tz),
@@ -619,8 +632,8 @@ static XrQuaternionf qmul(XrQuaternionf a, XrQuaternionf b) {
 static void recenter_take(const XrPosef *head) {
     static int on = -1;
     if (on < 0) on = !getenv("LARECOMP_VR_AUTO_RECENTER") || atoi(getenv("LARECOMP_VR_AUTO_RECENTER"));
-    if (!recenter_req || !on) return;
-    recenter_req = false;
+    if (!recenter_req || (!on && !recenter_user)) return;
+    recenter_req = recenter_user = false;
     XrVector3f f = qrot(head->orientation, (XrVector3f){0, 0, -1});
     float yaw = atan2f(-f.x, -f.z);
     ref.orientation = (XrQuaternionf){0, sinf(yaw * 0.5f), 0, cosf(yaw * 0.5f)};
@@ -668,6 +681,7 @@ void vr_xr_frame_next(void) {
     head.position.x = (cur.view[0].pose.position.x + cur.view[1].pose.position.x) * 0.5f;
     head.position.y = (cur.view[0].pose.position.y + cur.view[1].pose.position.y) * 0.5f;
     head.position.z = (cur.view[0].pose.position.z + cur.view[1].pose.position.z) * 0.5f;
+    if (recenter_after && fs.predictedDisplayTime >= recenter_after) recenter_after = 0, vr_xr_recenter_user();
     if (cur.views_ok) recenter_take(&head);
     vr_input_sync(xs, space_local, fs.predictedDisplayTime, cur.views_ok ? &head : NULL);
 }

@@ -55,7 +55,8 @@ the same way.
 | Hold right stick press + push up / down | stronger / weaker 3D | |
 | A / B | A / B | A / B |
 | X / Y (left) — together = "L + R" | L / R | L / R |
-| Menu (left) | pause | + |
+| Menu (left): tap / hold | pause / **recenter** | + / recenter |
+| Meta button: hold | recenter (the Quest's own) | recenter |
 
 **How to play it**
 1. Build this branch from source (below), so you have `build\armsrecomp.exe` and your game's files extracted.

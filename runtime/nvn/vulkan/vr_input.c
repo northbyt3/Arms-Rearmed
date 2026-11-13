@@ -171,6 +171,7 @@ XrVector3f g_vr_hand_vel[2], g_vr_hand_angvel[2];
 _Atomic int g_vr_hand_ok[2];
 
 static int depth_tick;  // frames of a light tick in the right hand (the 3D depth stepped)
+static int menu_tick;   // ... in the left hand (recentered with the menu button)
 
 // (render thread, each frame after xrWaitFrame)
 void vr_input_sync(XrSession xs, XrSpace local, XrTime t, const XrPosef *head) {
@@ -219,7 +220,26 @@ void vr_input_sync(XrSession xs, XrSpace local, XrTime t, const XrPosef *head) {
         if (!now && was && !adjusted) { extern void vr_camera_next(void); vr_camera_next(); }
         was = now;
     }
-    if (get_b(xs, A_MENU)) b |= 1ull << BTN_PLUS;
+    {   // the menu button: a tap is + (pause), held 0.6 s it recenters - what's in front of you becomes forward (as in
+        // Meta's own games; holding the Meta button does the same, vr_xr.c)
+        static XrTime down;
+        static int pulse;
+        static bool done;
+        bool now = get_b(xs, A_MENU);
+        if (now && !down) down = t ? t : 1, done = false;
+        if (now && !done && t - down > 600000000) {
+            extern void vr_xr_recenter_user(void);
+            vr_xr_recenter_user();
+            done = true;
+            menu_tick = 6;  // (a tick in the left hand)
+            LOG("[vr] recentered (menu button held)\n");
+        }
+        if (!now && down) {
+            if (!done) pulse = 6;  // (a tap: the game sees + for a few frames)
+            down = 0;
+        }
+        if (pulse > 0) pulse--, b |= 1ull << BTN_PLUS;
+    }
     g_vr_stick[0] = axis(l.x), g_vr_stick[1] = axis(l.y), g_vr_stick[2] = axis(r.x), g_vr_stick[3] = axis(r.y);
     g_vr_input_live = 1;
     bool ok[2];
@@ -278,6 +298,7 @@ void vr_input_sync(XrSession xs, XrSpace local, XrTime t, const XrPosef *head) {
         for (int h = 0; h < 2; h++) {
             float amp = vr_rumble_amp(h);
             if (h == 1 && depth_tick > 0) depth_tick--, amp = fmaxf(amp, 0.3f);
+            if (h == 0 && menu_tick > 0) menu_tick--, amp = fmaxf(amp, 0.3f);
             if (amp < 0.02f && last[h] < 0.02f) continue;
             last[h] = amp;
             XrHapticVibration hv = {XR_TYPE_HAPTIC_VIBRATION};
