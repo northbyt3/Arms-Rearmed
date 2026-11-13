@@ -1067,7 +1067,12 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         float pv[8] = {renderer_origin_lower_left() ? 1.0f : 0.0f, 0, 0, 0, crop[0], crop[1], crop[2], crop[3]};
         memcpy(g_shot_crop, crop, sizeof crop);
         extern TexBackend *vr_mirror_take(void);
+        // (the Oculus Mirror shows the headset; the window shows the game's own picture unless
+        // LARECOMP_VR_DESKTOP_MIRROR=1: then our approximation of the left eye)
+        static int dmirror = -1;
+        if (dmirror < 0) dmirror = getenv("LARECOMP_VR_DESKTOP_MIRROR") && atoi(getenv("LARECOMP_VR_DESKTOP_MIRROR"));
         TexBackend *mirror = vr_on() ? vr_mirror_take() : NULL;
+        if (!dmirror) mirror = NULL;
         if (mirror) {  // (VR, in the arena) what the headset's left eye sees, HUD included, letterboxed
             double s = fmin(dw / mirror->width, dh / mirror->height);
             float mv[8] = {0, 0, 0, 0, 0, 0, 1, 1};

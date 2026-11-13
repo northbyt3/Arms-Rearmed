@@ -1150,6 +1150,34 @@ static void request_update(Renderer *r, IpcReq *req, IpcResp *resp) {
     (void)resp;
 }
 
+// The playback device: Windows' default, or (LARECOMP_AUDIO_DEVICE=<part of a name>) the first device whose name has
+// it; in VR (LARECOMP_VR) the headset's ("Oculus Virtual Audio Device" over Link: Windows' default may stay the PC's
+// speakers) unless LARECOMP_VR_AUDIO=0.
+static SDL_AudioDeviceID playback_device(void) {
+    static SDL_AudioDeviceID pick;
+    static int done;
+    if (done) return pick ? pick : SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
+    done = 1;
+    const char *want = getenv("LARECOMP_AUDIO_DEVICE");
+    const char *vr = getenv("LARECOMP_VR"), *vra = getenv("LARECOMP_VR_AUDIO");
+    bool headset = !want && vr && atoi(vr) && !(vra && !atoi(vra));
+    if (!want && !headset) return SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
+    int n = 0;
+    SDL_AudioDeviceID *ids = SDL_GetAudioPlaybackDevices(&n);
+    for (int i = 0; ids && i < n && !pick; i++) {
+        const char *name = SDL_GetAudioDeviceName(ids[i]);
+        if (!name) continue;
+        if (want ? SDL_strcasestr(name, want) != NULL
+                 : SDL_strcasestr(name, "Oculus") != NULL || SDL_strcasestr(name, "Quest") != NULL) {
+            pick = ids[i];
+            LOG("[audio] playing on \"%s\"%s\n", name, headset ? " (the headset)" : "");
+        }
+    }
+    SDL_free(ids);
+    if (!pick) LOG("[audio] no playback device %s%s: Windows' default\n", want ? "named like " : "for the headset", want ? want : "");
+    return pick ? pick : SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
+}
+
 static void renderer_open_output(Renderer *r) {
     if (getenv("LARECOMP_AUDIO_WAV")) {
         r->wav = fopen(getenv("LARECOMP_AUDIO_WAV"), "wb");
@@ -1158,7 +1186,7 @@ static void renderer_open_output(Renderer *r) {
     if (getenv("LARECOMP_NO_AUDIO") && strcmp(getenv("LARECOMP_NO_AUDIO"), "0")) return;
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) { LOG("[audren] SDL audio init failed: %s\n", SDL_GetError()); return; }
     SDL_AudioSpec spec = {SDL_AUDIO_F32, 2, (int)r->sample_rate};
-    r->stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+    r->stream = SDL_OpenAudioDeviceStream(playback_device(), &spec, NULL, NULL);
     if (!r->stream) { LOG("[audren] SDL audio open failed: %s\n", SDL_GetError()); return; }
     if (getenv("LARECOMP_AUDIO_GAIN")) SDL_SetAudioStreamGain(r->stream, (float)atof(getenv("LARECOMP_AUDIO_GAIN")));
     SDL_ResumeAudioStreamDevice(r->stream);
@@ -1464,7 +1492,7 @@ SERVICE("audout:u", audout_u) {
         if (getenv("LARECOMP_AUDOUT_WAV")) a->wav = fopen(getenv("LARECOMP_AUDOUT_WAV"), "wb");
         if (!(getenv("LARECOMP_NO_AUDIO") && strcmp(getenv("LARECOMP_NO_AUDIO"), "0")) && SDL_InitSubSystem(SDL_INIT_AUDIO)) {
             SDL_AudioSpec spec = {SDL_AUDIO_S16, (int)a->channels, (int)a->rate};
-            a->stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+            a->stream = SDL_OpenAudioDeviceStream(playback_device(), &spec, NULL, NULL);
             if (a->stream) {
                 if (getenv("LARECOMP_AUDIO_GAIN")) SDL_SetAudioStreamGain(a->stream, (float)atof(getenv("LARECOMP_AUDIO_GAIN")));
                 SDL_ResumeAudioStreamDevice(a->stream);

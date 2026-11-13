@@ -902,6 +902,9 @@ void vr_xr_quit(void) {
 
 // (the present, after the eyes and the HUD panel are drawn) the mirror from them
 static void mirror_make(const void *end_args) {
+    static int on = -1;  // (only for the game's window, when asked: LARECOMP_VR_DESKTOP_MIRROR=1)
+    if (on < 0) on = getenv("LARECOMP_VR_DESKTOP_MIRROR") && atoi(getenv("LARECOMP_VR_DESKTOP_MIRROR"));
+    if (!on) return;
     const EndArgs *a = end_args;  // (immersive: the left eye's picture with the HUD panel; else the big screen in the dark)
     if (own_fmt != VK_FORMAT_R8G8B8A8_UNORM || !ch[CH_LEFT].own) return;
     if (!mirror.own) {
