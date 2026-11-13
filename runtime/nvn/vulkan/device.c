@@ -14,6 +14,7 @@
 #include "../../ui/menu.h"
 #include "../rqueue.h"
 #include "vk.h"
+#include "vr.h"
 #include "record.h"
 #include "../output_scale.h"
 #include "../renderer.h"
@@ -145,9 +146,10 @@ static bool validating;  // the validation layer is on (validation_exit)
 static void create_instance(void) {
     Uint32 n_sdl = 0;
     const char *const *sdl_ext = SDL_Vulkan_GetInstanceExtensions(&n_sdl);
-    const char *ext[16];
+    const char *ext[32];
     uint32_t n_ext = 0;
     for (Uint32 i = 0; i < n_sdl && n_ext < 14; i++) ext[n_ext++] = sdl_ext[i];
+    if (vr_on()) n_ext += (uint32_t)vr_xr_instance_exts(ext, (int)n_ext, ext + n_ext, 14);  // (VR: what OpenXR needs)
     bool strict = getenv("LARECOMP_VK_VALIDATION_STOP") != NULL;
     bool validate = strict || getenv("LARECOMP_VK_VALIDATION") != NULL;
     if (validate) ext[n_ext++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
@@ -216,6 +218,10 @@ static void pick_device(void) {
     }
     if (best < 0) FATAL("no Vulkan 1.3 device\n");
     g_vk.phys = pd[best];
+    {   // (VR) the GPU the headset is on
+        VkPhysicalDevice xd = VK_NULL_HANDLE;
+        if (vr_on() && vr_xr_physical_device(g_vk.inst, &xd) && xd) g_vk.phys = xd;
+    }
     free(pd);
     vkGetPhysicalDeviceProperties(g_vk.phys, &g_vk.props);
     uint32_t nq = 0;
@@ -323,7 +329,7 @@ static void create_device(void) {
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, NULL);
     VkExtensionProperties *ep = calloc(ne, sizeof *ep);
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, ep);
-    const char *ext[16];
+    const char *ext[40];
     uint32_t n_ext = 0;
     ext[n_ext++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     g_vk.custom_border = has_ext(ep, ne, VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME);
@@ -519,6 +525,7 @@ static void create_device(void) {
     float prio = 1.0f;
     VkDeviceQueueCreateInfo qi = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueFamilyIndex = g_vk.qfam,
                                   .queueCount = 1, .pQueuePriorities = &prio};
+    if (vr_on()) n_ext += (uint32_t)vr_xr_device_exts(ext, (int)n_ext, ext + n_ext, 40 - (int)n_ext);  // (VR: what OpenXR needs)
     VkDeviceCreateInfo di = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .pNext = &f, .queueCreateInfoCount = 1,
                              .pQueueCreateInfos = &qi, .enabledExtensionCount = n_ext, .ppEnabledExtensionNames = ext};
     VK_CHECK(vkCreateDevice(g_vk.phys, &di, NULL, &g_vk.dev));
@@ -983,6 +990,15 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
     // the frame's work goes to the GPU now, in a submission of its own: it starts while we wait for the window's image.
     // Its GPU time is counted, and the window image's submission's from after its wait (exec.c gpu_timer_add)
     renderer_submit();
+    if (vr_on()) {  // (VR) the frame to the headset: the game's window crop (ARMS: its dynamic resolution's part)
+        float vc[4] = {0, 0, 1, 1};
+        if (t && t->width && t->height && t->present_crop[2] > 0 && t->present_crop[3] > 0) {
+            vc[0] = (float)t->present_crop[0] / t->width, vc[1] = (float)t->present_crop[1] / t->height;
+            vc[2] = (float)t->present_crop[2] / t->width, vc[3] = (float)t->present_crop[3] / t->height;
+        }
+        vr_xr_present(t, vc);
+        vr_frame_end();  // (the next frame: immersive or on the big screen)
+    }
     pp_mark(PP_SUBMIT);
     static const float black[4] = {0, 0, 0, 1};
     uint64_t t0 = SDL_GetTicksNS();
@@ -1067,6 +1083,7 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         renderer_submit();
     }
     pp_mark(PP_END);
+    if (vr_on()) vr_xr_frame_next();  // (VR) the next frame's eyes (waits for the headset's frame timing)
     pp_frames++;
     extern void vk_prof_frame(uint64_t frame, uint64_t present_ns);
     vk_prof_frame(frame, SDL_GetTicksNS() - t0);

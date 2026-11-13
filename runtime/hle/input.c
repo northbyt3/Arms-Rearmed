@@ -48,12 +48,21 @@ static void rumble_clear(void) {
     memset(rumble_values, 0, sizeof rumble_values);
     SDL_UnlockSpinlock(&rumble_lock);
 }
+// (VR, vr_input.c) the Touch controllers' rumble: what the game asks of each side, latched like the Switch's
+static _Atomic float vr_rumble[2];
+float vr_rumble_amp(int side) {
+    if (!rumble_allowed || !g_settings.rumble || menu_is_open()) return 0;
+    float a = vr_rumble[side & 1];
+    int pct = g_settings.rumble_strength;
+    return pct > 0 && pct < 100 ? a * (float)pct / 100 : a;
+}
 void input_rumble_send(uint32_t h, const RumbleValue *v) {
     int side = rumble_side(h);
     SDL_LockSpinlock(&rumble_lock);
     if (side < 0) { SDL_UnlockSpinlock(&rumble_lock); return; }
     if (rumble_allowed) rumble_values[side] = *v;
     SDL_UnlockSpinlock(&rumble_lock);
+    vr_rumble[side & 1] = v->low_amp > v->high_amp ? v->low_amp : v->high_amp;
 }
 RumbleValue input_rumble_get(uint32_t h) {
     RumbleValue v = {0, 160, 0, 320};
@@ -800,15 +809,17 @@ static void fill_state(Cpu *c) {
             if (getenv("LARECOMP_INPUT")) LOG("[input] short press %#llx\n", (unsigned long long)t);
         } else if (f > tap_frame) tap = 0;
     }
-    uint64_t b = menu ? script_buttons : held | tap | script_buttons;
+    extern _Atomic uint64_t g_vr_buttons;  // (VR: the Touch controllers, vr_input.c)
+    extern _Atomic int32_t g_vr_stick[4];
+    uint64_t b = menu ? script_buttons : held | tap | script_buttons | g_vr_buttons;
     {   // injected Plus: held for ~10 presented frames (the game polls several times per frame)
         extern uint64_t renderer_present_count(void);
         static uint64_t until;
         if (g_inject_plus > 0) { until = renderer_present_count() + 10; g_inject_plus = 0; }
         if (renderer_present_count() < until) b |= 1ull << BTN_PLUS;
     }
-    int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx) + script_lx), ly = clamp_axis((menu ? 0 : key_ly + pad_ly) + script_ly);
-    int32_t rx = clamp_axis((menu ? 0 : key_rx + pad_rx) + script_rx), ry = clamp_axis((menu ? 0 : key_ry + pad_ry) + script_ry);
+    int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx + g_vr_stick[0]) + script_lx), ly = clamp_axis((menu ? 0 : key_ly + pad_ly + g_vr_stick[1]) + script_ly);
+    int32_t rx = clamp_axis((menu ? 0 : key_rx + pad_rx + g_vr_stick[2]) + script_rx), ry = clamp_axis((menu ? 0 : key_ry + pad_ry + g_vr_stick[3]) + script_ry);
     extern bool mirror_input(void);  // mirror mode, the world on screen (runtime/hle/mirror.c): left and right swap
     bool mirrored = !menu && mirror_input();
     if (mirrored) {

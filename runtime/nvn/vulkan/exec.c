@@ -3659,12 +3659,28 @@ static VkDescriptorBufferInfo cbuf_info(int stage, ShaderInfo *si, int k, uint32
     static int scan_once = -1;
     if (scan_once < 0) scan_once = getenv("LARECOMP_VK_NO_SCAN_ONCE") == NULL;
     if (vr_on() && idx == 0 && vr_is_scene_camera((const void *)(uintptr_t)r.addr, r.size)) {
-        // (VR, vr.c) the scene camera's block, this eye's: a copy of its own (not shared with the other eye's draws)
-        uint64_t full = r.size < 50 * 16 ? r.size : 50 * 16, n = size > full ? size : full;
-        VkSpan s = vk_transient_copy((const void *)(uintptr_t)r.addr, n, 256);
-        vr_patch_camera(s.ptr, n, g_vr_eye);
-        static uint64_t npatch[2]; if ((npatch[g_vr_eye]++ % 2000) == 0) LOG("[vr] camera patch eye %d #%llu size %llu/%llu\n", g_vr_eye, (unsigned long long)npatch[g_vr_eye], (unsigned long long)size, (unsigned long long)r.size);
-        return ubo_span(s, size);
+        if (!g_vr_eye) vr_note_camera((const float *)(uintptr_t)r.addr, r.size);  // (which kind of frame this is)
+        if (vr_stereo_frame()) {
+            // (VR, vr.c) the scene camera's block, this eye's: a copy of its own (not shared with the other eye's draws).
+            // Patched here, then copied: the transient ring is write-combined memory (ReBAR), where reads are slow -
+            // patching it in place cost ~1 ms per draw.
+            uint64_t full = r.size < 50 * 16 ? r.size : 50 * 16, n = size > full ? size : full;
+            static _Alignas(16) float blk[0x8000 / 4], head[64 * 4];
+            if (n > sizeof blk) n = sizeof blk;
+            size_t hn = sizeof head < n ? sizeof head : (size_t)n;
+            static struct { uint64_t addr, n, seq; int eye; uint32_t gen; VkSpan s; } memo;  // (draws of one camera)
+            extern uint32_t vr_view_gen(void);
+            uint64_t seq = vk_pending_seq();
+            if (memo.addr == r.addr && memo.n == n && memo.seq == seq && memo.eye == g_vr_eye && memo.gen == vr_view_gen() &&
+                !memcmp(head, (const void *)(uintptr_t)r.addr, hn))
+                return ubo_span(memo.s, size);
+            memcpy(blk, (const void *)(uintptr_t)r.addr, n);
+            memcpy(head, blk, hn);  // (the original's head, to see it unchanged)
+            vr_patch_camera(blk, n, g_vr_eye);
+            VkSpan s = vk_transient_copy(blk, n, 256);
+            memo.addr = r.addr, memo.n = n, memo.seq = seq, memo.eye = g_vr_eye, memo.gen = vr_view_gen(), memo.s = s;
+            return ubo_span(s, size);
+        }
     }
     if (gc_lazy && si->uses_gmem && scan_once) return ubo_span(guest_copy_ex(r.addr, size, true), size);
     if (gc_lazy && si->uses_gmem) gc_scan_pointers((const uint32_t *)(uintptr_t)r.addr, size);
@@ -5981,15 +5997,34 @@ static void draw_(CmdRec *r, bool indexed) {
     Prog *pr = get_program(st.program, &vkey, &fkey);
     prog_wait(pr);
     if (!pr || atomic_load(&pr->state) != 1) { SKIP(!pr ? SK_NO_STAGES : atomic_load(&pr->state) == 2 ? SK_PROG_FAILED : SK_PROG_BUILDING); return; }
-    if (vr_on()) {  // (VR, vr.c) a draw is stereo when it sees the scene camera, a stereo texture or a stereo target
-        bool stereo = false;
-        for (int s = 0; s < 2 && !stereo; s++)
-            stereo = st.ubuf[s][0].addr && vr_is_scene_camera((const void *)(uintptr_t)st.ubuf[s][0].addr, st.ubuf[s][0].size);
-        for (int i = 0; i < st.rt.ncolor && !stereo; i++) stereo = vr_tex_stereo(st.rt.color[i]);
-        if (!stereo && st.rt.depth) stereo = vr_tex_stereo(st.rt.depth);
-        for (int i = 0; i < pr->fi->ntex && !stereo; i++) stereo = vr_tex_stereo(shader_texture_object(1, &pr->fi->tex[i]));
-        for (int i = 0; i < pr->vi->ntex && !stereo; i++) stereo = vr_tex_stereo(shader_texture_object(0, &pr->vi->tex[i]));
-        if (!stereo && g_vr_eye) return;  // (mono: drawn once, in the left eye's pass - the shadow maps)
+    if (vr_on() && vr_stereo_frame()) {  // (VR, vr.c) a draw is stereo when it sees the scene camera, a stereo texture or a stereo target
+        bool cam = false, seen = false, tgt = false;
+        for (int s = 0; s < 2 && !cam; s++)
+            cam = st.ubuf[s][0].addr && vr_is_scene_camera((const void *)(uintptr_t)st.ubuf[s][0].addr, st.ubuf[s][0].size);
+        for (int i = 0; i < pr->fi->ntex && !cam && !seen; i++) seen = vr_tex_stereo(shader_texture_object(1, &pr->fi->tex[i]));
+        for (int i = 0; i < pr->vi->ntex && !cam && !seen; i++) seen = vr_tex_stereo(shader_texture_object(0, &pr->vi->tex[i]));
+        for (int i = 0; i < st.rt.ncolor && !tgt; i++) tgt = vr_tex_stereo(st.rt.color[i]);
+        if (!tgt && st.rt.depth) tgt = vr_tex_stereo(st.rt.depth);
+        bool stereo = cam || seen || tgt, hud = false;
+        // the HUD (vr.c): drawn apart, over black in the left eye's pass and over white in the right one's
+        if (cam && !g_vr_eye) for (int i = 0; i < st.rt.ncolor; i++) vr_note_scene_target(st.rt.color[i]);
+        if (!cam && tgt && st.rt.ncolor == 1 && !st.rt.depth && (!seen || vr_hud_active(st.rt.color[0])) &&
+            vr_hud_wanted(st.rt.color[0])) {
+            if (vr_hud_begin(st.rt.color[0])) st.rt_dirty = true;
+            stereo = false, hud = true;  // (its target is the HUD image now: never made stereo)
+        } else if (vr_hud_end()) st.rt_dirty = true;
+        {   // LARECOMP_VR_DRAWLOG=<present>: each draw's VR kind that frame
+            static long at = -2;
+            if (at == -2) at = getenv("LARECOMP_VR_DRAWLOG") ? atol(getenv("LARECOMP_VR_DRAWLOG")) : -1;
+            if (at >= 0 && (long)vr_frame_id() == at) {
+                NvnTexture *c0 = st.rt.ncolor ? st.rt.color[0] : NULL;
+                LOG("[vrdraw] eye %d cam %d seen %d tgt %d hud %d -> %ux%u fmt %#x (n %d depth %d) ftex %d blend0 %02x%02x%02x%02x%02x%02x%02x%02x cs %x\n",
+                    g_vr_eye, cam, seen, tgt, hud, c0 ? c0->width : 0, c0 ? c0->height : 0, c0 ? c0->format : 0, st.rt.ncolor,
+                    st.rt.depth != NULL, pr->fi->ntex, st.blend[0][0], st.blend[0][1], st.blend[0][2], st.blend[0][3], st.blend[0][4],
+                    st.blend[0][5], st.blend[0][6], st.blend[0][7], st.color_state[0]);
+            }
+        }
+        if (!stereo && !hud && g_vr_eye) return;  // (mono: drawn once, in the left eye's pass - the shadow maps)
         if (stereo && !g_vr_eye) {        // its targets are the eyes' from now on
             for (int i = 0; i < st.rt.ncolor; i++) vr_mark(st.rt.color[i]);
             vr_mark(st.rt.depth);
@@ -7170,7 +7205,9 @@ static TexBackend *post_image(int i, uint32_t w, uint32_t h) {
     return d;
 }
 
+static VkImageView post_view_override;  // (VR: vk_vr_hud_combine) the destination's view, an image of vr_xr.c's
 static VkImageView post_view(TexBackend *d) {
+    if (post_view_override) return post_view_override;
     static const VkComponentMapping id = {0};
     return vk_image_view(d, VK_IMAGE_VIEW_TYPE_2D, d->format, 0, 1, 0, 1, id, VK_IMAGE_ASPECT_COLOR_BIT);
 }
@@ -7540,6 +7577,61 @@ void renderer_save_texture_tex(TexBackend *b, const char *path) {
     vmaDestroyImage(g_vk.vma, img, mem);
 }
 
+// (VR, vr_xr.c) the HUD panel's image (dst, w x h, an RGBA8 UNORM view, GENERAL) from the HUD drawn over black (a) and
+// over white (b): colour a, alpha 1 - (b - a), premultiplied; crop: the part of a / b to show (uv origin, size)
+void vk_vr_hud_combine(TexBackend *a, TexBackend *b, VkImage dst_img, VkImageView dst_view, uint32_t w, uint32_t h, const float crop_in[4]) {
+    (void)dst_img;
+    float fx = (float)content_extent((int)a->width, a->scalable, a->sx, a->ax) / (float)a->width;
+    float fy = (float)content_extent((int)a->height, a->scalable, a->sy, a->ay) / (float)a->height;
+    vk_end_pass();
+    VkCommandBuffer cb = vk_cmd();
+    VkImageView srcs[2] = {raw_view(a), raw_view(b)};
+    TexBackend d = {.format = VK_FORMAT_R8G8B8A8_UNORM, .width = w, .height = h, .depth = 1, .layers = 1, .levels = 1, .samples = 1,
+                    .aspect = VK_IMAGE_ASPECT_COLOR_BIT};
+    post_view_override = dst_view;
+    float pc[8] = {crop_in[0] * fx, crop_in[1] * fy, crop_in[2] * fx, crop_in[3] * fy, (float)w, (float)h,
+                   renderer_origin_lower_left() ? 1.0f : 0.0f, 0};
+    post_pass(cb, "vr_hud.frag", srcs, 2, &d, pc, false);
+    post_view_override = VK_NULL_HANDLE;
+    vk_full_barrier(cb);
+}
+
+// (VR, vr_xr.c) the part `crop` (uv origin, size) of b drawn into dst (an RGBA8 UNORM view, w x h, layout GENERAL),
+// filtered, as the window shows it; clear: the rest black first. In the current command buffer.
+void vk_vr_blit(TexBackend *b, VkImageView dst, uint32_t w, uint32_t h, const float crop_in[4], bool screen_filter) {
+    if (!b || !b->image || (b->aspect & ~VK_IMAGE_ASPECT_COLOR_BIT)) return;
+    float fx = (float)content_extent((int)b->width, b->scalable, b->sx, b->ax) / (float)b->width;
+    float fy = (float)content_extent((int)b->height, b->scalable, b->sy, b->ay) / (float)b->height;
+    float crop[4] = {crop_in[0] * fx, crop_in[1] * fy, crop_in[2] * fx, crop_in[3] * fy};
+    vk_end_pass();
+    VkCommandBuffer cb = vk_cmd();
+    vk_full_barrier(cb);
+    VkRenderingAttachmentInfo ca = {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = dst, .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+                                    .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE, .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
+    VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, {w, h}}, .layerCount = 1,
+                          .colorAttachmentCount = 1, .pColorAttachments = &ca};
+    rec_CmdBeginRendering(cb, &ri);
+    VkPipeline p = present_pipeline(VK_FORMAT_R8G8B8A8_UNORM);
+    VkDescriptorSet ds = vk_alloc_set(present_set_layout);
+    VkDescriptorImageInfo ii = {vk_default_sampler(true), raw_view(b), VK_IMAGE_LAYOUT_GENERAL};
+    VkWriteDescriptorSet wr = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds, .dstBinding = 0, .descriptorCount = 1,
+                               .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &ii};
+    rec_UpdateDescriptorSets(1, &wr);
+    rec_CmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
+    rec_CmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, present_layout, 0, 1, &ds, 0, NULL);
+    VkViewport vp = {0, 0, (float)w, (float)h, 0, 1};
+    VkRect2D sc = {{0, 0}, {w, h}};
+    rec_CmdSetViewport(cb, 0, 1, &vp);
+    rec_CmdSetScissor(cb, 0, 1, &sc);
+    float pv[12] = {renderer_origin_lower_left() ? 1.0f : 0.0f, 0, 0, 0, crop[0], crop[1], crop[2], crop[3]};
+    if (screen_filter) screen_filter_params(pv + 8);
+    rec_CmdPushConstants(cb, present_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 48, pv);
+    fullscreen_vertex_bind(cb);
+    rec_CmdDraw(cb, 3, 1, 0, 0);
+    rec_CmdEndRendering(cb);
+    vk_full_barrier(cb);
+}
+
 // ================================================================== executor (renderer.m exec_list)
 static void exec_list(uint64_t handle, int depth) {
     uint64_t p = handle;
@@ -7835,10 +7927,11 @@ static void exec_list(uint64_t handle, int depth) {
 
 void backend_execute(uint64_t handle) {
     PROF_T0();
-    if (vr_on()) {  // (VR, vr.c) the list twice: the left eye, then the right one with every stereo texture's twin
+    if (vr_on() && vr_stereo_frame()) {  // (VR, vr.c) the list twice: the left eye, then the right one with every stereo texture's twin
         __typeof__(st) start = st;
         g_vr_eye = 0;
         exec_list(handle, 0);
+        vr_hud_end();
         vk_end_pass();
         __typeof__(st) left_end = st;
         st = start;
@@ -7846,6 +7939,7 @@ void backend_execute(uint64_t handle) {
         vr_swap(1);
         g_vr_eye = 1;
         exec_list(handle, 0);
+        vr_hud_end();
         vk_end_pass();
         vr_swap(0);
         g_vr_eye = 0;

@@ -644,6 +644,16 @@ void rec_QueuePresentKHR(VkSemaphore wait, VkSwapchainKHR swapchain, uint32_t im
 }
 bool rec_present_recreate(void) { return atomic_exchange_explicit(&present_recreate, 0, memory_order_acq_rel) != 0; }
 
+// (VR, vr_xr.c) fn(args) on the queue's thread, in order with the submissions before it: OpenXR's frame end uses the
+// queue (the swapchain images' copies, xrEndFrame), which the recorder owns
+void rec_call(void (*fn)(const void *args), const void *args, uint32_t size) {
+    if (on <= 0) { fn(args); return; }
+    ENQ_T0();
+    memcpy(push(fn, size, 0), args, size);
+    publish();
+    ENQ_END();
+}
+
 // ================================================================== commands
 // Scalar arguments: a struct of the command buffer and the values, made by a macro from the parameter list.
 #define CMD_ARGS(name, ...) typedef struct { VkCommandBuffer cb; __VA_ARGS__ } name##Args;

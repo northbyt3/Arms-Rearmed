@@ -304,6 +304,22 @@ static const char *builtin_src(const char *name, int *stage) {
                "  gl_FragDepth = mix(mix(d00, d10, f.x), mix(d01, d11, f.x), f.y);\n"
                "}\n";
     }
+    if (!strcmp(name, "vr_hud.frag")) {  // (VR) the HUD over black (t0) and over white (t1) -> premultiplied colour + alpha
+        *stage = STAGE_FRAGMENT;          // a = the part to show (uv origin, size), b = (output size, flip y)
+        return "#version 450\n"
+               "layout(set = 0, binding = 0) uniform sampler2D t0;\n"
+               "layout(set = 0, binding = 1) uniform sampler2D t1;\n"
+               "layout(push_constant) uniform P { vec4 a; vec4 b; } p;\n"
+               "layout(location = 0) out vec4 o;\n"
+               "void main() {\n"
+               "  vec2 f = gl_FragCoord.xy / p.b.xy;\n"
+               "  if (p.b.z > 0.5) f.y = 1.0 - f.y;\n"
+               "  vec2 uv = p.a.xy + f * p.a.zw;\n"
+               "  vec3 k = texture(t0, uv).rgb, w = texture(t1, uv).rgb;\n"
+               "  float a = clamp(1.0 - max(max(w.r - k.r, w.g - k.g), w.b - k.b), 0.0, 1.0);\n"
+               "  o = vec4(min(k, vec3(a)), a);\n"
+               "}\n";
+    }
     if (!strcmp(name, "post.vert")) {
         *stage = STAGE_VERTEX;
         return "#version 450\n"

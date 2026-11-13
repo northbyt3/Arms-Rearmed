@@ -29,6 +29,7 @@ void rec_QueueSubmit2(const VkSubmitInfo2 *si, uint64_t seq);
 // vkQueuePresentKHR(image of swapchain, after wait). The result reaches rec_present_recreate(); the wait inside the
 // driver (FIFO: until the display) is the recorder's, counted in g_vk_frame_waits[2].
 void rec_QueuePresentKHR(VkSemaphore wait, VkSwapchainKHR swapchain, uint32_t image);
+void rec_call(void (*fn)(const void *args), const void *args, uint32_t size);  // fn(copy of args) on the queue's thread, in order
 bool rec_present_recreate(void);  // (and clears it) the last present asked for a new swapchain (OUT_OF_DATE / SUBOPTIMAL)
 
 // ---- descriptor sets (the translating thread only)

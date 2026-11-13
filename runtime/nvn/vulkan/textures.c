@@ -249,6 +249,15 @@ bool renderer_texture_frame_fresh(NvnTexture *t) {
     return true;
 }
 
+// (VR, vr.c) b's contents this frame are already made (the HUD's images, cleared to black / white): its first pass
+// must load them, not clear them
+void vk_tex_mark_written(TexBackend *b) {
+    extern uint64_t renderer_exec_frame(void);
+    b->frame_cleared = renderer_exec_frame() + 1;
+    b->level_gen = g_level_gen;
+    b->touched_frame = renderer_exec_frame() + 1;
+}
+
 bool renderer_texture_level_fresh(NvnTexture *t) {
     TexBackend *b = t ? (TexBackend *)t->backend : NULL;
     static int keep = -1;
@@ -637,6 +646,26 @@ TexBackend *vk_tex_twin(NvnTexture *t) {
     extern void vr_register(TexBackend *b);
     vr_register(b);
     return w;
+}
+
+// (VR, vr.c) an image like t's own (size, format, scale), ours alone: the HUD's. Freed with vk_tex_clone_free.
+TexBackend *vk_tex_clone(NvnTexture *t) {
+    TexBackend *b = tex_backend(t), *w = calloc(1, sizeof *w);
+    w->scalable = b->scalable;
+    create_image(t, w);
+    w->gpu_owned = true;
+    return w;
+}
+void vk_tex_clone_free(TexBackend *w) {
+    if (!w) return;
+    if (w->vr_twin) {  // (never made stereo; if it was, its twin goes too)
+        extern void vr_unregister(TexBackend *b);
+        vr_unregister(w);
+        destroy_image(w->vr_twin);
+        free(w->vr_twin);
+    }
+    destroy_image(w);
+    free(w);
 }
 
 // Reboot (device.c backend_reset; GPU idle): every game texture and its views go.
