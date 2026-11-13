@@ -395,36 +395,47 @@ void vr_game_view(float *fovy, float *pitch, float *dy) {
     *dy = cam_stab && g_vrs.world_scale > 0 ? (cam_pos[1] - cam_smooth_y) / g_vrs.world_scale : 0;
 }
 
+// The game camera relative to the view drawn (the player's reference: x right, y up, z back, meters) and its heading
+// there (radians, the headset's sense: + turns left) - the HUD panel goes in front of it, in every camera mode
+void vr_game_cam(float off[3], float *yaw) {
+    float sc = g_vrs.world_scale > 0 ? g_vrs.world_scale : 10;
+    if (!drawn_have) {  // (the game camera is the view, its height smoothed)
+        off[0] = off[2] = 0, off[1] = cam_stab ? (cam_pos[1] - cam_smooth_y) / sc : 0;
+        *yaw = 0;
+        return;
+    }
+    float sx = -sinf(drawn_yaw), sz = cosf(drawn_yaw);  // (rows: right (sz, 0, -sx), back (sx, 0, sz))
+    float d[3] = {cam_pos[0] - drawn_pos[0], cam_pos[1] - drawn_pos[1], cam_pos[2] - drawn_pos[2]};
+    off[0] = (sz * d[0] - sx * d[2]) / sc, off[1] = d[1] / sc, off[2] = (sx * d[0] + sz * d[2]) / sc;
+    float fx = sinf(cam_yaw), fz = -cosf(cam_yaw);      // (its forward, world)
+    float lx = sz * fx - sx * fz, lz = sx * fx + sz * fz;
+    *yaw = atan2f(-lx, -lz);
+}
+
 bool vr_stereo_frame(void) {
     float q[4], p[3], tan[4];
     return immersive && vr_eye_view(0, q, p, tan);
 }
 
-// ---- the player's fighter, roughly (the stadium seat's arrow): ARMS's fight camera keeps the player at the bottom
-// middle of the picture, feet near 85% down. A ray from the game camera through there meets the arena floor (taken as
-// the camera's height when the fight starts minus 2.2 m, LARECOMP_VR_FLOOR_DROP: ARMS's resting fight camera stands
-// about that high); the arrow floats 2.4 m above that point.
+// ---- the player's fighter, roughly (the stadium seat's arrow): ARMS's fight camera follows just behind the player's
+// fighter - measured on the fight's frames, their feet are ~1-1.3 m ahead of it (below the picture's bottom edge) and
+// ~2 m under it, their head ~1.8 m up. The arrow floats over the head: 1 m ahead of the camera along its heading,
+// 0.25 m above it (it rises with the camera when the fighter jumps). LARECOMP_VR_MARK_AHEAD / _UP (m) tune it.
 static float player_world[3];
 static bool player_ok;
-static float floor_y;
-static bool floor_have;
 static void player_estimate(void) {
     player_ok = false;
-    if (!immersive || !ncam) { floor_have = false; return; }
+    if (!immersive || !ncam) return;
     float sc = g_vrs.world_scale > 0 ? g_vrs.world_scale : 10;
-    static float drop = -1;
-    if (drop < 0) drop = getenv("LARECOMP_VR_FLOOR_DROP") ? (float)atof(getenv("LARECOMP_VR_FLOOR_DROP")) : 2.2f;
-    if (!floor_have) floor_y = cam_pos[1] - drop * sc, floor_have = true;
-    float dy = -0.7f * tanf(cam_fovy * 0.5f);     // (the ray in view space: (0, dy, -1); NDC y -0.7)
-    float cp = cosf(cam_pitch), sp = sinf(cam_pitch);
-    float fy = sp + dy * cp, fh = cp - dy * sp;   // (pitched: its up and its forward along the heading)
-    if (fy > -1e-3f) return;
-    float t = (floor_y - cam_pos[1]) / fy, fwd = fh * t;
-    if (t <= 0 || fwd > 20 * sc) return;
+    static float ahead = -100, up;
+    if (ahead == -100) {
+        ahead = getenv("LARECOMP_VR_MARK_AHEAD") ? (float)atof(getenv("LARECOMP_VR_MARK_AHEAD")) : 1.0f;
+        up = getenv("LARECOMP_VR_MARK_UP") ? (float)atof(getenv("LARECOMP_VR_MARK_UP")) : 0.25f;
+    }
     float hx = sinf(cam_yaw), hz = -cosf(cam_yaw);  // (the heading: -back)
-    player_world[0] = cam_pos[0] + hx * fwd;
-    player_world[1] = floor_y + 2.4f * sc;
-    player_world[2] = cam_pos[2] + hz * fwd;
+    player_world[0] = cam_pos[0] + hx * ahead * sc;
+    player_world[1] = (cam_stab ? cam_smooth_y : cam_pos[1]) + up * sc;
+    player_world[2] = cam_pos[2] + hz * ahead * sc;
     player_ok = true;
 }
 

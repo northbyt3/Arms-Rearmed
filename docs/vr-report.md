@@ -212,14 +212,18 @@ Found and fixed while playing:
   the next: **regular** (the game's camera, default), **far** (2.5 m back, 1 m up), **stadium** (a still seat 3 m
   behind and 1.5 m above where the fight / the mode began - no camera motion at all, a yellow arrow floats over
   your fighter). Regular and far are made from the very camera block being drawn (no frame of lag). The stadium
-  arrow's place is estimated: a ray from the game camera through the bottom middle of its picture (where ARMS keeps
-  your fighter) meets the arena floor (`LARECOMP_VR_FLOOR_DROP`, default 2.2 m below the camera at the fight's
-  start). `LARECOMP_VR_CAMERA` picks the mode at start. Outside regular the HUD panel is fixed in front of you.
+  arrow's place is estimated from the game camera, which follows just behind your fighter: 1 m ahead of it and
+  0.25 m above it (measured on fight frames; `LARECOMP_VR_MARK_AHEAD` / `LARECOMP_VR_MARK_UP` tune it). `LARECOMP_VR_CAMERA` picks the mode at start. Outside regular the HUD panel is fixed in front of you.
 - **3D depth** - measured on a live capture: the stereo is right (correct sign, correct scale: the opponent comes out
   ~1.65 m tall at ~9 m, your fighter ~1.6 m in front of you, the stands 20 m+). At those distances real eyes get
   little depth (2-5 px of disparity), which reads as flat. `LARECOMP_VR_DEPTH` (default 1.5) widens the eyes'
   spacing in the game world; live: hold the right stick pressed and push it up / down (steps of 0.25, a tick in
   the right hand). 1 = true to life; more = stronger 3D (the world feels a little smaller).
+- **Life bars by the fighters, in every camera mode**: the HUD panel is placed in the game camera's own view
+  (its place, heading, pitch and field of view, relative to wherever you are), 6 m out (`LARECOMP_VR_HUD_DIST`).
+  A HUD drawn for the game camera lines up exactly with the world at the panel's distance from that camera, from
+  any viewpoint - the opponent's life bar and name stay on the opponent from the far and stadium seats too (in the
+  stadium the panel moves with the game camera). Before, it was a fixed panel outside the regular mode and 1.6 m out.
 - **World-anchored HUD in 3D**: HUD pieces the game places with the camera (the opponent's life bar, damage numbers)
   are drawn into each eye at their place in the arena instead of flat on the panel.
 - **Quest button prompts**: while the Touch controllers are read, the game's prompts show A / B, RG / LG (grips),

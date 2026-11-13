@@ -396,7 +396,7 @@ void vr_settings_init(void) {
     g_vrs.res = set_f("LARECOMP_VR_RES", 1.0f);               // eye image size x the headset's recommended
     g_vrs.panel_dist = set_f("LARECOMP_VR_PANEL_DIST", 2.2f); // menus: the screen's distance (m)
     g_vrs.panel_width = set_f("LARECOMP_VR_PANEL_WIDTH", 3.0f);
-    g_vrs.hud_dist = set_f("LARECOMP_VR_HUD_DIST", 1.6f);     // fights: the HUD panel's distance and width (m)
+    g_vrs.hud_dist = set_f("LARECOMP_VR_HUD_DIST", 6.0f);     // fights: the HUD panel's distance and width (m)
     g_vrs.hud_width = set_f("LARECOMP_VR_HUD_WIDTH", 0);       // 0: the game camera's view (lines up); else a fixed width (m)
     g_vrs.blink = set_f("LARECOMP_VR_BLINK", 0.2f);
     g_vrs.vignette = set_f("LARECOMP_VR_VIGNETTE", 0.7f);   // comfort vignette while the game camera turns / moves fast         // seconds of black when switching big screen <-> arena
@@ -746,7 +746,7 @@ static void end_run(const void *p) {
             aq.subImage.swapchain = ch[CH_ARROW].sc;
             aq.subImage.imageRect.extent.width = aq.subImage.imageRect.extent.height = ARROW_PX;
             aq.pose = a->arrow_pose;
-            aq.size.width = aq.size.height = 0.6f;
+            aq.size.width = aq.size.height = 0.45f;
             layers[nl++] = (const XrCompositionLayerBaseHeader *)&aq;
         }
         if (a->panel && chain_put(&ch[CH_PANEL])) {
@@ -778,30 +778,29 @@ static XrPosef panel_pose(float dist) {  // (dist m in front of the reference, f
     return p;
 }
 
-// The HUD panel. By default it covers exactly what the flat game's camera sees (its field of view, its pitch, its
-// height relative to the player), as if the TV picture's HUD were drawn on a window in front of that camera: what the
-// game places on the screen over something in the world (damage numbers, markers, names) lines up with it.
+// The HUD panel. By default it covers exactly what the flat game's camera sees (its field of view, its pitch, its place
+// and heading relative to the player - in every camera mode), as if the TV picture's HUD were drawn on a window in
+// front of that camera: what the game places on the screen over something in the world (the life bars, names) lines
+// up with it, exactly so at the panel's distance from that camera (6 m: about the opponent's) from any viewpoint.
 // LARECOMP_VR_HUD_WIDTH=<m>: a fixed panel that size instead (smaller: easier to read, no longer lined up).
 static void hud_place(XrPosef *pose, float *w, float *h) {
-    float d = g_vrs.hud_dist > 0.3f ? g_vrs.hud_dist : 1.6f;
-    extern bool vr_camera_is_game(void);
-    if (g_vrs.hud_width > 0 || !vr_camera_is_game()) {  // (a fixed panel: or the game camera isn't where the player is)
-        if (g_vrs.hud_width <= 0) {
-            *pose = panel_pose(d);
-            *w = 1.8f, *h = 1.8f * 9 / 16;
-            return;
-        }
-        *pose = panel_pose(d);
+    float d = g_vrs.hud_dist > 0.3f ? g_vrs.hud_dist : 6.0f;
+    if (g_vrs.hud_width > 0) {  // (a fixed panel)
+        *pose = panel_pose(d < 3 ? d : 1.6f);
         *w = g_vrs.hud_width, *h = g_vrs.hud_width * 9 / 16;
         return;
     }
     extern void vr_game_view(float *fovy, float *pitch, float *dy);
-    float fovy, pitch, dy;
+    extern void vr_game_cam(float off[3], float *yaw);
+    float fovy, pitch, dy, off[3], yaw;
     vr_game_view(&fovy, &pitch, &dy);
-    XrQuaternionf qp = {sinf(pitch * 0.5f), 0, 0, cosf(pitch * 0.5f)};
-    XrVector3f f = qrot(qp, (XrVector3f){0, 0, -d});
-    XrVector3f o = qrot(ref.orientation, (XrVector3f){f.x, f.y + dy, f.z});
-    pose->orientation = qmul(ref.orientation, qp);
+    vr_game_cam(off, &yaw);
+    (void)dy;  // (in off)
+    XrQuaternionf qy = {0, sinf(yaw * 0.5f), 0, cosf(yaw * 0.5f)}, qp = {sinf(pitch * 0.5f), 0, 0, cosf(pitch * 0.5f)};
+    XrQuaternionf qc = qmul(qy, qp);  // (the game camera's turn and pitch in the reference)
+    XrVector3f f = qrot(qc, (XrVector3f){0, 0, -d});
+    XrVector3f o = qrot(ref.orientation, (XrVector3f){off[0] + f.x, off[1] + f.y, off[2] + f.z});
+    pose->orientation = qmul(ref.orientation, qc);
     pose->position = (XrVector3f){ref.position.x + o.x, ref.position.y + o.y, ref.position.z + o.z};
     *h = 2 * d * tanf(fovy * 0.5f);
     *w = *h * 16 / 9;
@@ -965,6 +964,11 @@ void vr_xr_present(NvnTexture *t, const float crop[4]) {
                         snprintf(path, sizeof path, "build/frames/vr_%05llu_%s.png", at, nm[i]);
                         renderer_save_texture_tex(&sb[i], path);
                         LOG("[vr] saved %s\n", path);
+                    }
+                    if (mirror.own && a.immersive) {  // (LARECOMP_VR_DESKTOP_MIRROR: the left eye with the HUD where it appears)
+                        char path[128];
+                        snprintf(path, sizeof path, "build/frames/vr_%05llu_mirror.png", at);
+                        renderer_save_texture_tex(&mb_out, path);
                     }
                     for (int i = 0; i < 2 && shot_ha; i++) {  // (the HUD over black / white: its coverage, offline)
                         char path[128];

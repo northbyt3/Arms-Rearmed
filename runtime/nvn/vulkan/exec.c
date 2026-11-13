@@ -5549,6 +5549,7 @@ bool renderer_prepare(const ShaderRec *r, const ShaderBlob *vsb, const ShaderBlo
         p->fkey = fkey;
         p->prep_vh = r->vs, p->prep_fh = r->fs;
         bool ok = translate_program_now(p);
+        if (ok) save_glsl(p->vi->msl, r->vs, "prep_vs"), save_glsl(p->fi->msl, r->fs, "prep_fs");  // (by content hash)
         p->code[0] = p->code[1] = 0;  // (the game files' copies are gone after this call)
         PREP_PUT(prep_progs, ck, p);  // (failed ones too: the game then skips them as it would its own)
         if (!ok) return false;
@@ -6079,7 +6080,7 @@ static void draw_(CmdRec *r, bool indexed) {
         if (cam && !g_vr_eye) for (int i = 0; i < st.rt.ncolor; i++) vr_note_scene_target(st.rt.color[i]);
         // (a HUD piece drawn with copies of the camera's matrices is anchored in the world - the opponent's life bar
         // and name, damage numbers: drawn into each eye in 3D, where it belongs, not onto the flat panel)
-        bool world_ui = !cam && tgt && st.rt.ncolor == 1 && !st.rt.depth && vr_draw_world_ui(pr->vi, st.program->stages[0].code_addr);
+        bool world_ui = !cam && tgt && st.rt.ncolor == 1 && !st.rt.depth && vr_draw_world_ui(pr->vi, pr->prep_vh ? pr->prep_vh : st.program->stages[0].code_addr);
         if (!cam && !world_ui && tgt && st.rt.ncolor == 1 && !st.rt.depth && (!seen || vr_hud_active(st.rt.color[0])) &&
             vr_hud_wanted(st.rt.color[0])) {
             if (vr_hud_begin(st.rt.color[0])) st.rt_dirty = true;
