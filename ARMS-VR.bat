@@ -37,9 +37,10 @@ rem set LARECOMP_VR_MODE=auto
 rem Big screen: distance and width in meters (menus, intros, the VS screen)
 rem set LARECOMP_VR_PANEL_DIST=2.2
 rem set LARECOMP_VR_PANEL_WIDTH=3.0
-rem HUD panel in fights: distance and width in meters (0 = the HUD drawn into the 3D view as in the flat game)
+rem HUD panel in fights: distance in meters; width 0 (default) = exactly the game camera's view, so damage numbers and
+rem markers line up with the fighters; a width in meters = a fixed, smaller panel (easier to read, no longer lined up)
 rem set LARECOMP_VR_HUD_DIST=1.6
-rem set LARECOMP_VR_HUD_WIDTH=2.0
+rem set LARECOMP_VR_HUD_WIDTH=0
 rem set LARECOMP_VR_HUD_PANEL=1
 rem Comfort: vignette while the game camera turns / moves fast (0 = off, 1 = strong; default 0.7)
 rem set LARECOMP_VR_VIGNETTE=0.7

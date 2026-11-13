@@ -1066,6 +1066,14 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         VkCommandBuffer cb = vk_cmd();
         float pv[8] = {renderer_origin_lower_left() ? 1.0f : 0.0f, 0, 0, 0, crop[0], crop[1], crop[2], crop[3]};
         memcpy(g_shot_crop, crop, sizeof crop);
+        extern TexBackend *vr_mirror_take(void);
+        TexBackend *mirror = vr_on() ? vr_mirror_take() : NULL;
+        if (mirror) {  // (VR, in the arena) what the headset's left eye sees, HUD included, letterboxed
+            double s = fmin(dw / mirror->width, dh / mirror->height);
+            float mv[8] = {0, 0, 0, 0, 0, 0, 1, 1};
+            vk_present_draw(cb, mirror, (float)((dw - mirror->width * s) / 2), (float)((dh - mirror->height * s) / 2),
+                            (float)(mirror->width * s), (float)(mirror->height * s), mv);
+        } else
         vk_present_draw(cb, b, (float)vx, (float)vy, (float)vw, (float)vh, pv);
         pp_mark(PP_BLIT);
         static long menu_at = -1;

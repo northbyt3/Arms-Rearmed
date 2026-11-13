@@ -128,7 +128,8 @@ I could not wear the headset, so everything below was verified with:
   (`resolution = 3x` in `larecomp-vr.ini`).
 - **Frame pacing**: the game runs at 60 fps; Link at 72/90 Hz uses reprojection between frames. `LARECOMP_VR_HZ=120`
   makes the timing even (60 × 2) if your Link settings allow 120 Hz.
-- The desktop window mirrors the left eye (without the HUD in fights).
+- The desktop window shows what the headset's left eye sees in fights (HUD panel included); menus as the big screen shows them.
+- The HUD panel covers exactly the game camera's view (its zoom, pitch and height), so damage numbers and markers line up with the fighters.
 
 ## Why punches are gestures and not Joy-Con emulation
 

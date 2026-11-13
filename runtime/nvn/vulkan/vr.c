@@ -252,6 +252,7 @@ static const TexBackend *hud_frame_target;
 static bool hud_began[2];  // this frame, per eye: a HUD draw was made (later draws into that target are the HUD's too)
 static float cam_key[4][4];
 static float cam_fovy, cam_pos[3], cam_yaw;  // (the frame's first scene camera)
+static float cam_pitch;
 static float vignette;                       // the comfort vignette's strength now (0..1)
 float vr_vignette(void) { return vignette; }
 static bool immersive;
@@ -266,6 +267,8 @@ void vr_note_camera(const float *u, uint64_t size) {
         cam_fovy = size >= 18 * 16 ? r[17][2] : 0;
         cam_pos[0] = r[11][3], cam_pos[1] = r[12][3], cam_pos[2] = r[13][3];
         cam_yaw = atan2f(-r[2][0], r[2][2]);  // (forward = -row 2: its heading)
+        float fy = -r[2][1];
+        cam_pitch = asinf(fy > 1 ? 1 : fy < -1 ? -1 : fy);
     }
     ncam++;
     static int camlog = -1;
@@ -278,6 +281,15 @@ void vr_note_camera(const float *u, uint64_t size) {
 }
 
 bool vr_immersive(void) { return immersive; }
+
+// The flat game's view relative to the player's (for the HUD panel: drawn for the game camera, it lines up with the
+// world when it covers that camera's view): its vertical field of view (radians), pitch (radians, up +; 0 when the
+// camera isn't levelled - the player's view has it then) and height above the player's viewpoint (meters)
+void vr_game_view(float *fovy, float *pitch, float *dy) {
+    *fovy = cam_fovy > 0.2f && cam_fovy < 2.5f ? cam_fovy : 0.96f;
+    *pitch = g_vrs.level ? cam_pitch : 0;
+    *dy = cam_stab && g_vrs.world_scale > 0 ? (cam_pos[1] - cam_smooth_y) / g_vrs.world_scale : 0;
+}
 
 bool vr_stereo_frame(void) {
     float q[4], p[3], tan[4];

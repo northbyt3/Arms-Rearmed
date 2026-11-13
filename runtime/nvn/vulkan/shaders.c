@@ -321,6 +321,23 @@ static const char *builtin_src(const char *name, int *stage) {
                "  o = vec4(c, 1.0);\n"
                "}\n";
     }
+    if (!strcmp(name, "vr_mirror.frag")) {  // (VR) the desktop's view of the headset: the left eye (t0) with the HUD panel
+        *stage = STAGE_FRAGMENT;             // (t1, premultiplied) over it in the rectangle a (uv x0 y0 x1 y1); b.xy output
+        return "#version 450\n"              // size, b.z: 1 when there is a HUD
+               "layout(set = 0, binding = 0) uniform sampler2D t0;\n"
+               "layout(set = 0, binding = 1) uniform sampler2D t1;\n"
+               "layout(push_constant) uniform P { vec4 a; vec4 b; } p;\n"
+               "layout(location = 0) out vec4 o;\n"
+               "void main() {\n"
+               "  vec2 f = gl_FragCoord.xy / p.b.xy;\n"
+               "  vec3 c = texture(t0, f).rgb;\n"
+               "  if (p.b.z > 0.5 && f.x >= p.a.x && f.x <= p.a.z && f.y >= p.a.y && f.y <= p.a.w) {\n"
+               "    vec4 h = texture(t1, (f - p.a.xy) / (p.a.zw - p.a.xy));\n"
+               "    c = c * (1.0 - h.a) + h.rgb;\n"
+               "  }\n"
+               "  o = vec4(c, 1.0);\n"
+               "}\n";
+    }
     if (!strcmp(name, "vr_hud.frag")) {  // (VR) the HUD over black (t0) and over white (t1) -> premultiplied colour + alpha
         *stage = STAGE_FRAGMENT;          // a = the part to show (uv origin, size), b = (output size, flip y)
         return "#version 450\n"

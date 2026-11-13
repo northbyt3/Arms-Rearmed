@@ -323,7 +323,7 @@ void vr_settings_init(void) {
     g_vrs.panel_dist = set_f("LARECOMP_VR_PANEL_DIST", 2.2f); // menus: the screen's distance (m)
     g_vrs.panel_width = set_f("LARECOMP_VR_PANEL_WIDTH", 3.0f);
     g_vrs.hud_dist = set_f("LARECOMP_VR_HUD_DIST", 1.6f);     // fights: the HUD panel's distance and width (m)
-    g_vrs.hud_width = set_f("LARECOMP_VR_HUD_WIDTH", 1.8f);
+    g_vrs.hud_width = set_f("LARECOMP_VR_HUD_WIDTH", 0);       // 0: the game camera's view (lines up); else a fixed width (m)
     g_vrs.blink = set_f("LARECOMP_VR_BLINK", 0.2f);
     g_vrs.vignette = set_f("LARECOMP_VR_VIGNETTE", 0.7f);   // comfort vignette while the game camera turns / moves fast         // seconds of black when switching big screen <-> arena
     g_vrs.hz = set_f("LARECOMP_VR_HZ", 0);                    // headset refresh rate request (0: as set)
@@ -614,6 +614,45 @@ static XrPosef panel_pose(float dist) {  // (dist m in front of the reference, f
     return p;
 }
 
+// The HUD panel. By default it covers exactly what the flat game's camera sees (its field of view, its pitch, its
+// height relative to the player), as if the TV picture's HUD were drawn on a window in front of that camera: what the
+// game places on the screen over something in the world (damage numbers, markers, names) lines up with it.
+// LARECOMP_VR_HUD_WIDTH=<m>: a fixed panel that size instead (smaller: easier to read, no longer lined up).
+static void hud_place(XrPosef *pose, float *w, float *h) {
+    float d = g_vrs.hud_dist > 0.3f ? g_vrs.hud_dist : 1.6f;
+    if (g_vrs.hud_width > 0) {
+        *pose = panel_pose(d);
+        *w = g_vrs.hud_width, *h = g_vrs.hud_width * 9 / 16;
+        return;
+    }
+    extern void vr_game_view(float *fovy, float *pitch, float *dy);
+    float fovy, pitch, dy;
+    vr_game_view(&fovy, &pitch, &dy);
+    XrQuaternionf qp = {sinf(pitch * 0.5f), 0, 0, cosf(pitch * 0.5f)};
+    XrVector3f f = qrot(qp, (XrVector3f){0, 0, -d});
+    XrVector3f o = qrot(ref.orientation, (XrVector3f){f.x, f.y + dy, f.z});
+    pose->orientation = qmul(ref.orientation, qp);
+    pose->position = (XrVector3f){ref.position.x + o.x, ref.position.y + o.y, ref.position.z + o.z};
+    *h = 2 * d * tanf(fovy * 0.5f);
+    *w = *h * 16 / 9;
+}
+
+// ---- the desktop's mirror: what the left eye sees (the HUD panel drawn where it appears), letterboxed in the window
+static Chain mirror;  // (only its own image)
+static bool mirror_ready;
+static TexBackend mb_eye, mb_hud, mb_out;  // (views of our images, for the drawing helpers)
+static TexBackend wrap(VkImage img, uint32_t w, uint32_t h) {
+    return (TexBackend){.image = img, .format = VK_FORMAT_R8G8B8A8_UNORM, .width = w, .height = h, .depth = 1, .layers = 1,
+                        .levels = 1, .samples = 1, .aspect = VK_IMAGE_ASPECT_COLOR_BIT, .sx = 1, .sy = 1, .ax = 1, .ay = 1};
+}
+void vk_vr_mirror(TexBackend *eye, TexBackend *hud, TexBackend *dst, const float rect[4]);
+static void mirror_make(const void *end_args);
+TexBackend *vr_mirror_take(void) {
+    bool r = mirror_ready;
+    mirror_ready = false;
+    return r ? &mb_out : NULL;
+}
+
 // ------------------------------------------------------------------ present (T)
 static bool frame_scene;  // the scene camera was drawn with the eyes' views this frame (vr.c)
 void vr_note_scene(void) { frame_scene = true; }
@@ -695,9 +734,9 @@ void vr_xr_present(NvnTexture *t, const float crop[4]) {
                 vk_vr_hud_combine(ha, hb, ch[CH_PANEL].own, ch[CH_PANEL].own_view, ch[CH_PANEL].w, ch[CH_PANEL].h,
                                   vr_hud_on_window() ? crop : whole);
                 a.panel = true;
-                a.panel_pose = panel_pose(g_vrs.hud_dist);
-                a.panel_w = g_vrs.hud_width, a.panel_h = g_vrs.hud_width * 9 / 16;
+                hud_place(&a.panel_pose, &a.panel_w, &a.panel_h);
             }
+            mirror_make(a.panel ? &a : NULL);
         } else {  // a menu, a loading screen, a cutscene: the picture on a big screen
             TexBackend *ha, *hb;
             vr_hud_take(&ha, &hb);
@@ -750,4 +789,47 @@ void vr_xr_quit(void) {
     if (!xs) return;
     rec_drain();
     if (running) { pxrRequestExitSession(xs); }
+}
+
+// (the present, after the eyes and the HUD panel are drawn) the mirror from them
+static void mirror_make(const void *end_args) {
+    const EndArgs *a = end_args;  // (NULL: no HUD panel this frame)
+    if (own_fmt != VK_FORMAT_R8G8B8A8_UNORM || !ch[CH_LEFT].own) return;
+    if (!mirror.own) {
+        mirror.w = ch[CH_LEFT].w, mirror.h = ch[CH_LEFT].h;
+        VkImageCreateInfo ii = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D, .format = own_fmt,
+                                .extent = {mirror.w, mirror.h, 1}, .mipLevels = 1, .arrayLayers = 1, .samples = VK_SAMPLE_COUNT_1_BIT,
+                                .tiling = VK_IMAGE_TILING_OPTIMAL,
+                                .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT};
+        VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+        if (vmaCreateImage(g_vk.vma, &ii, &ai, &mirror.own, &mirror.own_mem, NULL) != VK_SUCCESS) { mirror.own = VK_NULL_HANDLE; return; }
+        vk_image_init_layout(vk_cmd(), mirror.own, VK_IMAGE_ASPECT_COLOR_BIT);
+        LOG("[vr] desktop mirror: the left eye, %ux%u\n", mirror.w, mirror.h);
+    }
+    mb_eye = wrap(ch[CH_LEFT].own, ch[CH_LEFT].w, ch[CH_LEFT].h);
+    mb_hud = wrap(ch[CH_PANEL].own, ch[CH_PANEL].w, ch[CH_PANEL].h);
+    mb_out = wrap(mirror.own, mirror.w, mirror.h);
+    float rect[4] = {0, 0, 0, 0};
+    bool hud = false;
+    if (a && a->panel) {  // the panel's corners seen from the left eye
+        const XrView *v = &cur.view[0];
+        XrQuaternionf inv = {-v->pose.orientation.x, -v->pose.orientation.y, -v->pose.orientation.z, v->pose.orientation.w};
+        float tl = tanf(v->fov.angleLeft), tr = tanf(v->fov.angleRight), tu = tanf(v->fov.angleUp), td = tanf(v->fov.angleDown);
+        float u0 = 1e9f, v0 = 1e9f, u1 = -1e9f, v1 = -1e9f;
+        hud = true;
+        for (int k = 0; k < 4 && hud; k++) {
+            XrVector3f c = qrot(a->panel_pose.orientation, (XrVector3f){(k & 1 ? 0.5f : -0.5f) * a->panel_w, (k & 2 ? 0.5f : -0.5f) * a->panel_h, 0});
+            c.x += a->panel_pose.position.x - v->pose.position.x;
+            c.y += a->panel_pose.position.y - v->pose.position.y;
+            c.z += a->panel_pose.position.z - v->pose.position.z;
+            XrVector3f d = qrot(inv, c);
+            if (d.z > -0.01f) { hud = false; break; }  // (behind the eye)
+            float x = d.x / -d.z, y = d.y / -d.z;
+            float u = (x - tl) / (tr - tl), w = (tu - y) / (tu - td);
+            u0 = fminf(u0, u), u1 = fmaxf(u1, u), v0 = fminf(v0, w), v1 = fmaxf(v1, w);
+        }
+        rect[0] = u0, rect[1] = v0, rect[2] = u1, rect[3] = v1;
+    }
+    vk_vr_mirror(&mb_eye, hud ? &mb_hud : NULL, &mb_out, rect);
+    mirror_ready = true;
 }
