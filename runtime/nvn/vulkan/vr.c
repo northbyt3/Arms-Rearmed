@@ -103,9 +103,10 @@ static void patch_set(float (*r)[4], int base, float ex) {
 
 // The game camera levelled: its yaw kept, pitch and roll gone (the camera's place unchanged). In VR the user's head
 // sets pitch and roll; a camera pitched by the game while the head is level tilts the whole world.
-static void level_set(float (*r)[4], int base) {
+// dy: moved up by that much (the height stabilisation, vr_frame_end)
+static void level_set(float (*r)[4], int base, float dy) {
     float (*V)[4] = r + base, (*IV)[4] = r + base + 11;
-    float c[3] = {IV[0][3], IV[1][3], IV[2][3]};  // the camera's place
+    float c[3] = {IV[0][3], IV[1][3] + dy, IV[2][3]};  // the camera's place
     float bx = V[2][0], bz = V[2][2], l = sqrtf(bx * bx + bz * bz);
     if (l < 1e-4f) return;  // (looking straight down: keep it)
     bx /= l, bz /= l;
@@ -120,8 +121,10 @@ static void level_set(float (*r)[4], int base) {
 // One view set moved to a headset eye: E = the eye's pose in the game camera's space (rotation R, place t in game
 // units); view' = E^-1 x view, inverse view' = inverse view x E, the projection the eye's field of view (its depth
 // rows as the game's: same near / far and depth convention).
+static bool cam_stab;        // the height stabilisation applies this frame (vr_frame_end)
+static float cam_smooth_y;   // the camera's smoothed height
 static void xr_set(float (*r)[4], int base, const float q[4], const float t[3], const float tan[4], bool level) {
-    if (level) level_set(r, base);
+    if (level) level_set(r, base, cam_stab ? cam_smooth_y - r[base + 12][3] : 0.0f);
     float (*V)[4] = r + base, (*VP)[4] = r + base + 3, (*P)[4] = r + base + 7, (*IV)[4] = r + base + 11;
     float x = q[0], y = q[1], z = q[2], w = q[3];
     float R[3][3] = {{1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)},
@@ -176,7 +179,7 @@ static int nscene_tgt;  // (the HUD section below)
 static const TexBackend *hud_frame_target;
 static bool hud_began[2];  // this frame, per eye: a HUD draw was made (later draws into that target are the HUD's too)
 static float cam_key[4][4];
-static float cam_fovy;
+static float cam_fovy, cam_pos[3];
 static bool immersive;
 static int good, bad;
 
@@ -185,7 +188,10 @@ void vr_note_camera(const float *u, uint64_t size) {
     float k[4] = {r[11][3], r[12][3], r[13][3], r[7][0]};
     for (int i = 0; i < ncam && i < 4; i++) if (!memcmp(cam_key[i], k, sizeof k)) return;
     if (ncam < 4) memcpy(cam_key[ncam], k, sizeof k);
-    if (!ncam) cam_fovy = size >= 18 * 16 ? r[17][2] : 0;
+    if (!ncam) {
+        cam_fovy = size >= 18 * 16 ? r[17][2] : 0;
+        cam_pos[0] = r[11][3], cam_pos[1] = r[12][3], cam_pos[2] = r[13][3];
+    }
     ncam++;
     static int camlog = -1;
     if (camlog < 0) camlog = getenv("LARECOMP_VR_CAMLOG") != NULL;
@@ -209,9 +215,30 @@ void vr_frame_end(void) {
         const char *e = getenv("LARECOMP_VR_MODE");
         mode = e && !strcmp(e, "screen") ? 1 : e && !strcmp(e, "scene") ? 2 : 0;
     }
-    bool fight = mode == 2 ? ncam >= 1 : mode == 1 ? false : ncam == 1 && fabsf(cam_fovy - 0.9599f) < 0.035f;
+    // the fight starts at the camera's resting 55 degrees; during it the camera zooms (42-57 degrees seen) - while
+    // immersive, one camera with any such field of view keeps it so
+    bool fight = mode == 2 ? ncam >= 1 : mode == 1 ? false
+               : immersive ? ncam == 1 && cam_fovy > 0.6f && cam_fovy < 1.15f
+                           : ncam == 1 && fabsf(cam_fovy - 0.9599f) < 0.035f;
     if (fight) good++, bad = 0;
     else bad++, good = 0;
+    {   // height stabilisation (LARECOMP_VR_STABLE_HEIGHT=0: off): the camera's height smoothed over ~1.5 s, so a
+        // jump doesn't lift the player's head with it (they look up at their fighter instead); a cut resets it
+        static int stab = -1;
+        static float smooth[3];
+        static bool have;
+        if (stab < 0) stab = !getenv("LARECOMP_VR_STABLE_HEIGHT") || atoi(getenv("LARECOMP_VR_STABLE_HEIGHT"));
+        float dx = cam_pos[0] - smooth[0], dz = cam_pos[2] - smooth[2];
+        if (!stab || !ncam || !immersive || !have || dx * dx + dz * dz > 25.0f * 25.0f) {
+            memcpy(smooth, cam_pos, sizeof smooth);
+            have = ncam > 0;
+        } else {
+            smooth[0] = cam_pos[0], smooth[2] = cam_pos[2];
+            smooth[1] += (cam_pos[1] - smooth[1]) * 0.011f;  // (1 - e^(-1/90): ~1.5 s at 60 fps)
+        }
+        cam_stab = stab && immersive && have;  // (the next frame's camera goes to that height)
+        cam_smooth_y = smooth[1];
+    }
     bool was = immersive;
     if (!immersive && good >= 8) immersive = true;
     if (immersive && bad >= 20) immersive = false;

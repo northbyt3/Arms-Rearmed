@@ -323,7 +323,8 @@ void vr_settings_init(void) {
     g_vrs.panel_dist = set_f("LARECOMP_VR_PANEL_DIST", 2.2f); // menus: the screen's distance (m)
     g_vrs.panel_width = set_f("LARECOMP_VR_PANEL_WIDTH", 3.0f);
     g_vrs.hud_dist = set_f("LARECOMP_VR_HUD_DIST", 1.6f);     // fights: the HUD panel's distance and width (m)
-    g_vrs.hud_width = set_f("LARECOMP_VR_HUD_WIDTH", 2.0f);
+    g_vrs.hud_width = set_f("LARECOMP_VR_HUD_WIDTH", 1.8f);
+    g_vrs.blink = set_f("LARECOMP_VR_BLINK", 0.2f);         // seconds of black when switching big screen <-> arena
     g_vrs.hz = set_f("LARECOMP_VR_HZ", 0);                    // headset refresh rate request (0: as set)
 }
 
@@ -503,7 +504,7 @@ bool vr_eye_view(int eye, float q[4], float p[3], float tan[4]) {
 // ------------------------------------------------------------------ the end of a frame (R)
 typedef struct {
     XrTime time;
-    bool render, immersive, panel;
+    bool render, immersive, panel, blank;
     XrView view[2];
     XrPosef panel_pose;
     float panel_w, panel_h;
@@ -532,7 +533,7 @@ static void end_run(const void *p) {
     XrCompositionLayerProjectionView pv[2];
     XrCompositionLayerProjection proj = {XR_TYPE_COMPOSITION_LAYER_PROJECTION};
     XrCompositionLayerQuad quad = {XR_TYPE_COMPOSITION_LAYER_QUAD};
-    if (a->render) {
+    if (a->render && !a->blank) {
         if (a->immersive && chain_put(&ch[CH_LEFT]) && chain_put(&ch[CH_RIGHT])) {
             for (int e = 0; e < 2; e++) {
                 pv[e] = (XrCompositionLayerProjectionView){XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW};
@@ -631,6 +632,12 @@ void vr_xr_present(NvnTexture *t, const float crop[4]) {
     static TexBackend *shot_ha, *shot_hb;  // (LARECOMP_VR_SHOT_AT) this frame's HUD images
     if (a.render) {
         a.immersive = scene && cur.views_ok;
+        {   // switching between the big screen and the arena: a short blink (black) instead of a cut
+            static int last = -1, blink;
+            if (last >= 0 && last != (int)a.immersive) blink = (int)(g_vrs.blink * 60 + 0.5f);
+            last = a.immersive;
+            if (blink > 0) blink--, a.blank = true;
+        }
         if (a.immersive) {
             a.view[0] = cur.view[0], a.view[1] = cur.view[1];
             vk_vr_blit(b, ch[CH_LEFT].own_view, ch[CH_LEFT].w, ch[CH_LEFT].h, crop, true);

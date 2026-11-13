@@ -43,6 +43,7 @@ typedef struct {
     float panel_dist, panel_width;  // menus' screen (m)
     float hud_dist, hud_width;      // fights' HUD panel (m)
     float hz;                       // refresh rate to ask for (0: the headset's)
+    float blink;                    // seconds of black when switching big screen <-> arena
 } VrSettings;
 extern VrSettings g_vrs;
 
