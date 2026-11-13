@@ -20,6 +20,56 @@ your own console.
 
 ![ARMS Rearmed's icon (original art, no game assets)](docs/icon/icon.png)
 
+## VR mode (Meta Quest over Link) — this fork
+
+This branch adds a **full VR mode**: fights in the arena in stereo 3D, head-tracked, standing behind your fighter,
+with the Touch controllers as the input — including **real punches** (throw a punch and that arm punches). Menus,
+intros and replays play on a big virtual screen. It runs on the PC through OpenXR, with the headset connected over
+Meta Horizon Link (cable or Air Link). Tested on a Quest 3S; other Link headsets (Quest 2 / 3 / Pro) should work
+the same way.
+
+**What you get**
+- **Real 3D**: each eye is rendered from its own place; the arena, the fighters and the hit effects all have depth.
+  A **3D depth** setting makes it stronger (default 1.5×, adjustable while playing).
+- **Three camera modes** (right stick press; smooth glide between them): **regular** (the game's camera, behind your
+  fighter), **far** (pulled back and up) and **stadium** (a still seat in the stands, with an arrow over your
+  fighter — the most comfortable).
+- **Motion punches**: punch forward with a controller to throw that arm, both at once to grab, fists up at your face
+  to guard. The triggers punch too.
+- **HUD in the world**: the life bars stay by the fighters, damage numbers float where the hits land, the timer and
+  portraits sit on a panel in your view.
+- **Quest button prompts** in the game (A / B / X / Y / grips instead of the Switch's), the game's rumble on the
+  controllers, its sound in the headset.
+- **Comfort**: levelled horizon, jumps don't lift your head, a vignette while the camera swings fast, a short blink
+  when switching between the screen and the arena, automatic recenter at each fight.
+
+**Controls (Touch)**
+
+| Touch | In a fight | In menus |
+|---|---|---|
+| Right / left trigger (or a real punch) | punch right / left | A / B |
+| Both triggers (or both fists) | grab | |
+| Right grip / left grip | jump / dash | |
+| Left stick (press: guard, or fists up) | move | move |
+| Right stick press | next camera mode | |
+| Hold right stick press + push up / down | stronger / weaker 3D | |
+| A / B | A / B | A / B |
+| X / Y (left) — together = "L + R" | L / R | L / R |
+| Menu (left) | pause | + |
+
+**How to play it**
+1. Build this branch from source (below), so you have `build\armsrecomp.exe` and your game's files extracted.
+2. Start **Meta Horizon Link** on the PC and connect the headset (Link cable or Air Link) so you're in the Link home.
+3. Double-click **`ARMS-VR.bat`**. It uses its own settings file (`larecomp-vr.ini`) and its own save folder
+   (`save-vr`, copied from your normal save the first time), so your normal game is untouched.
+4. The **Oculus Mirror** window opens on the PC and shows exactly what your left eye sees.
+
+Options (world scale, 3D depth, camera mode at start, HUD distance, comfort settings, refresh rate) are at the
+bottom of `ARMS-VR.bat`. How it works, what was tried and the known issues: [docs/vr-report.md](docs/vr-report.md).
+
+**Known issues**: on "Choose your ARMS" the player's bar shows dark and a thin line crosses the screen; the HUD in
+the far / stadium views is smaller (it covers what the game's camera sees, from farther away).
+
 ## Play with RecompLauncher
 
 ARMS Rearmed works with [RecompLauncher](https://recomplauncher.com): install it from the launcher, then give Easy
