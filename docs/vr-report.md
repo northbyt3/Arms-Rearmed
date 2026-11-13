@@ -61,6 +61,8 @@ I could not wear the headset, so everything below was verified with:
 | Touch controllers as the pad, rumble on the controllers | ✅ bindings accepted by the simulator; feel untested |
 | 60 fps at 2x internal res, both eyes | ✅ GPU 3.3 ms/frame (GTX 1080 Ti) |
 | Motion punches / guard (controller motion → the game's punch / guard buttons) | ✅ unit-tested (`vr/vr_gesture_test.c`, 15 cases), no false punches with idle controllers in the simulator; feel untested |
+| Stays in the arena through a real fight (scripted 40 s fight: punches, grabs, jumps, dashes, a KO) | ✅ |
+| Comfort: vignette while the camera turns/moves fast, height stabilisation, blink on mode switches | ✅ |
 | True Joy-Con motion mode (IMU emulation: curving by tilting, etc.) | ❌ not done, see below |
 
 ## How it works (short)
@@ -72,12 +74,17 @@ I could not wear the headset, so everything below was verified with:
   frame's set) is recognised in the constant buffers and rewritten per eye: view = eye pose⁻¹ × levelled game
   view (eye pose in meters × world scale, 10 units/m), projection = the eye's asymmetric frustum (the game's depth
   rows kept).
-- **Which frames are immersive**: the fight camera has a signature (one scene camera, 55° FOV). 8 frames of it turn
-  the arena on, 20 frames without it turn it off. The ARMS LIVE intro (50°), character select, VS screen (two
+- **Which frames are immersive**: the fight camera has a signature (one scene camera, 55° FOV at rest). 8 frames of
+  it turn the arena on; during the fight the camera zooms (42–57° measured), so one camera with any such FOV keeps
+  it on, and 20 frames without (two cameras, none) turn it off. The ARMS LIVE intro (50°), character select, VS screen (two
   cameras) etc. go to the big screen, rendered once (no second eye pass: cheaper).
 - **HUD**: in fights, draws after the scene into the HUD layer are redirected: the left pass draws them over black,
   the right pass over white; alpha = 1 − (white − black) recovers exact coverage for any blend mode; shown on an
-  OpenXR quad layer at 1.6 m.
+  OpenXR quad layer at 1.6 m (1.8 m wide).
+- **Comfort**: the fight camera yaws > 30°/s in 21% of frames (up to ~110°/s) and dashes move it ~6 m/s. While it
+  turns or moves fast, the view's edges darken (vignette, `LARECOMP_VR_VIGNETTE`); its height is smoothed over
+  ~1.5 s so jumps don't lift your head (you look up at your fighter instead); switching between the big screen and
+  the arena blinks to black for 0.2 s instead of cutting.
 - **OpenXR**: loaded at run time (`libopenxr_loader.dll`), Vulkan via `XR_KHR_vulkan_enable`; `xrWaitFrame` +
   pose after each present, frame end on the recorder thread (it owns the Vulkan queue) with the poses the frame was
   rendered with, so the runtime's reprojection (ASW/timewarp) is correct.
@@ -98,7 +105,9 @@ I could not wear the headset, so everything below was verified with:
 5. **18 fps in the arena** — profiling showed descriptor-set building at ~1.9 s per 2 s. Cause: the camera block was
    patched in place inside the transient upload ring, which is write-combined (ReBAR) memory where CPU reads are
    very slow. Patching on the stack and copying once (plus a per-camera memo) → solid 60 fps.
-6. **Test noise** — other agents' builds/games and a leftover XR Simulator process (50% GPU) ran on the same PC at
+6. **Flickering between arena and big screen mid-fight** — the fight camera zooms its FOV; fixed with hysteresis
+   (enter on the resting 55°, stay while one camera remains).
+7. **Test noise** — other agents' builds/games and a leftover XR Simulator process (50% GPU) ran on the same PC at
    times, causing unrelated slowdowns in some measurements. Simulator processes are stopped after each test.
 
 ## Known issues / things to check in the headset
@@ -106,8 +115,11 @@ I could not wear the headset, so everything below was verified with:
 - **World scale**: estimated (~10 game units per meter from the fighter's size and the measured parallax). If
   fighters feel like giants or toys, change `LARECOMP_VR_SCALE` (smaller value = bigger world).
 - **Camera motion**: the game's chase camera still yaws to keep the opponent in view; that's artificial rotation.
-  Levelled horizon and head tracking help a lot, but if it makes you queasy, tell me — options are a comfort
-  vignette or yaw smoothing.
+  Levelled horizon, the vignette and height smoothing help; if it still makes you queasy, raise
+  `LARECOMP_VR_VIGNETTE` to 1, or tell me and I'll add yaw smoothing / snap turning.
+- **Your in-game F1 menu (ImGui) is not shown in the headset** — only on the desktop window. The game's own menus are.
+- **Audio**: plays on Windows' default device; turn on "Oculus/Meta audio" in the Link settings to hear it in the
+  headset.
 - **Resolution**: the scene is a 16:9 render squeezed into a nearly square eye FOV, so horizontal detail is higher
   than vertical. 2x internal resolution is the default; 3x is affordable on the 1080 Ti if it looks soft
   (`resolution = 3x` in `larecomp-vr.ini`).
@@ -151,3 +163,4 @@ Diagnostics: `LARECOMP_VR_CAMLOG=1` (scene cameras per frame), `LARECOMP_VR_DRAW
 - Performance fix (write-combined memory reads): immersive 18 → 60 fps.
 - Launcher `ARMS-VR.bat`, VR settings template.
 - Motion punches / guard gestures (unit-tested); simulator re-run: no false punches, 60 fps.
+- Fight hysteresis (camera zoom), height stabilisation, blink transitions, comfort vignette (verified in a scripted fight).

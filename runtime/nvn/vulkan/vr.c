@@ -179,7 +179,9 @@ static int nscene_tgt;  // (the HUD section below)
 static const TexBackend *hud_frame_target;
 static bool hud_began[2];  // this frame, per eye: a HUD draw was made (later draws into that target are the HUD's too)
 static float cam_key[4][4];
-static float cam_fovy, cam_pos[3];
+static float cam_fovy, cam_pos[3], cam_yaw;  // (the frame's first scene camera)
+static float vignette;                       // the comfort vignette's strength now (0..1)
+float vr_vignette(void) { return vignette; }
 static bool immersive;
 static int good, bad;
 
@@ -191,6 +193,7 @@ void vr_note_camera(const float *u, uint64_t size) {
     if (!ncam) {
         cam_fovy = size >= 18 * 16 ? r[17][2] : 0;
         cam_pos[0] = r[11][3], cam_pos[1] = r[12][3], cam_pos[2] = r[13][3];
+        cam_yaw = atan2f(-r[2][0], r[2][2]);  // (forward = -row 2: its heading)
     }
     ncam++;
     static int camlog = -1;
@@ -238,6 +241,28 @@ void vr_frame_end(void) {
         }
         cam_stab = stab && immersive && have;  // (the next frame's camera goes to that height)
         cam_smooth_y = smooth[1];
+    }
+    {   // comfort vignette: the edges of the view darken while the game camera turns or moves fast (it yaws > 30
+        // degrees/s a fifth of the time in a fight, dashes move it ~6 m/s): less of the artificial motion in the
+        // periphery, where it makes people sick. LARECOMP_VR_VIGNETTE=0..1 (default 0.7, 0: off)
+        static float last_yaw, last_pos[3];
+        static bool have;
+        float target = 0;
+        if (immersive && ncam && have) {
+            float dyaw = fabsf(remainderf(cam_yaw - last_yaw, 6.2831853f)) * 60 * 57.29578f;  // degrees/s
+            float dx = cam_pos[0] - last_pos[0], dy = cam_pos[1] - last_pos[1], dz = cam_pos[2] - last_pos[2];
+            float speed = sqrtf(dx * dx + dy * dy + dz * dz) * 60 / (g_vrs.world_scale > 0 ? g_vrs.world_scale : 10);  // m/s
+            if (speed < 30) {  // (more: a camera cut, not motion)
+                float a = (dyaw - 25) / 90, b = (speed - 3) / 8;
+                target = fminf(1, fmaxf(0, fmaxf(a, b)));
+            }
+        }
+        have = ncam > 0;
+        last_yaw = cam_yaw;
+        memcpy(last_pos, cam_pos, sizeof last_pos);
+        float k = target > vignette ? 0.25f : 0.04f;  // (in fast, out slowly)
+        vignette += (target - vignette) * k;
+        if (!immersive) vignette = 0;
     }
     bool was = immersive;
     if (!immersive && good >= 8) immersive = true;

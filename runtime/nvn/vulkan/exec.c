@@ -7579,6 +7579,24 @@ void renderer_save_texture_tex(TexBackend *b, const char *path) {
 
 // (VR, vr_xr.c) the HUD panel's image (dst, w x h, an RGBA8 UNORM view, GENERAL) from the HUD drawn over black (a) and
 // over white (b): colour a, alpha 1 - (b - a), premultiplied; crop: the part of a / b to show (uv origin, size)
+// (VR, vr_xr.c) an eye's picture: the part `crop` of b into dst (w x h, an RGBA8 UNORM view, GENERAL), with the
+// comfort vignette (strength 0..1, centred at the eye's optical centre: cx in uv offset from the middle)
+void vk_vr_eye(TexBackend *b, VkImageView dst_view, uint32_t w, uint32_t h, const float crop_in[4], float vignette, float cx) {
+    if (!b || !b->image || (b->aspect & ~VK_IMAGE_ASPECT_COLOR_BIT)) return;
+    float fx = (float)content_extent((int)b->width, b->scalable, b->sx, b->ax) / (float)b->width;
+    float fy = (float)content_extent((int)b->height, b->scalable, b->sy, b->ay) / (float)b->height;
+    vk_end_pass();
+    VkCommandBuffer cb = vk_cmd();
+    VkImageView src = raw_view(b);
+    TexBackend d = {.format = VK_FORMAT_R8G8B8A8_UNORM, .width = w, .height = h, .depth = 1, .layers = 1, .levels = 1, .samples = 1,
+                    .aspect = VK_IMAGE_ASPECT_COLOR_BIT};
+    post_view_override = dst_view;
+    float pc[8] = {crop_in[0] * fx, crop_in[1] * fy, crop_in[2] * fx, crop_in[3] * fy, (float)w, (float)h, vignette, cx};
+    post_pass(cb, "vr_eye.frag", &src, 1, &d, pc, false);
+    post_view_override = VK_NULL_HANDLE;
+    vk_full_barrier(cb);
+}
+
 void vk_vr_hud_combine(TexBackend *a, TexBackend *b, VkImage dst_img, VkImageView dst_view, uint32_t w, uint32_t h, const float crop_in[4]) {
     (void)dst_img;
     float fx = (float)content_extent((int)a->width, a->scalable, a->sx, a->ax) / (float)a->width;

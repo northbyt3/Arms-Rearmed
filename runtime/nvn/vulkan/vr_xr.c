@@ -324,7 +324,8 @@ void vr_settings_init(void) {
     g_vrs.panel_width = set_f("LARECOMP_VR_PANEL_WIDTH", 3.0f);
     g_vrs.hud_dist = set_f("LARECOMP_VR_HUD_DIST", 1.6f);     // fights: the HUD panel's distance and width (m)
     g_vrs.hud_width = set_f("LARECOMP_VR_HUD_WIDTH", 1.8f);
-    g_vrs.blink = set_f("LARECOMP_VR_BLINK", 0.2f);         // seconds of black when switching big screen <-> arena
+    g_vrs.blink = set_f("LARECOMP_VR_BLINK", 0.2f);
+    g_vrs.vignette = set_f("LARECOMP_VR_VIGNETTE", 0.7f);   // comfort vignette while the game camera turns / moves fast         // seconds of black when switching big screen <-> arena
     g_vrs.hz = set_f("LARECOMP_VR_HZ", 0);                    // headset refresh rate request (0: as set)
 }
 
@@ -581,6 +582,7 @@ static bool frame_scene;  // the scene camera was drawn with the eyes' views thi
 void vr_note_scene(void) { frame_scene = true; }
 
 void vk_vr_blit(TexBackend *b, VkImageView dst, uint32_t w, uint32_t h, const float crop[4], bool screen_filter);
+void vk_vr_eye(TexBackend *b, VkImageView dst_view, uint32_t w, uint32_t h, const float crop[4], float vignette, float cx);
 void vk_vr_hud_combine(TexBackend *a, TexBackend *b, VkImage dst_img, VkImageView dst_view, uint32_t w, uint32_t h, const float crop[4]);
 
 // (LARECOMP_VR_FAKE_HEAD without a headset) our images alone, at a Quest 3's eye size: the frame's pictures are made
@@ -640,8 +642,14 @@ void vr_xr_present(NvnTexture *t, const float crop[4]) {
         }
         if (a.immersive) {
             a.view[0] = cur.view[0], a.view[1] = cur.view[1];
-            vk_vr_blit(b, ch[CH_LEFT].own_view, ch[CH_LEFT].w, ch[CH_LEFT].h, crop, true);
-            vk_vr_blit(b->vr_twin ? b->vr_twin : b, ch[CH_RIGHT].own_view, ch[CH_RIGHT].w, ch[CH_RIGHT].h, crop, true);
+            for (int e = 0; e < 2; e++) {
+                TexBackend *src = e && b->vr_twin ? b->vr_twin : b;
+                if (own_fmt == VK_FORMAT_R8G8B8A8_UNORM) {
+                    float tl = tanf(cur.view[e].fov.angleLeft), tr = tanf(cur.view[e].fov.angleRight);
+                    float cx = tr - tl > 1e-4f ? -(tr + tl) / (tr - tl) * 0.5f : 0;  // (the eye's optical centre, uv)
+                    vk_vr_eye(src, ch[e].own_view, ch[e].w, ch[e].h, crop, vr_vignette() * g_vrs.vignette, cx);
+                } else vk_vr_blit(src, ch[e].own_view, ch[e].w, ch[e].h, crop, true);
+            }
             TexBackend *ha, *hb;
             shot_ha = shot_hb = NULL;
             if (vr_hud_take(&ha, &hb) && own_fmt == VK_FORMAT_R8G8B8A8_UNORM) {

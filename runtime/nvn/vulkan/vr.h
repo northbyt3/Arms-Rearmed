@@ -44,6 +44,7 @@ typedef struct {
     float hud_dist, hud_width;      // fights' HUD panel (m)
     float hz;                       // refresh rate to ask for (0: the headset's)
     float blink;                    // seconds of black when switching big screen <-> arena
+    float vignette;                 // comfort vignette strength (0 off .. 1)
 } VrSettings;
 extern VrSettings g_vrs;
 
@@ -64,6 +65,7 @@ void vr_note_camera(const float *u, uint64_t size);  // (exec.c, left eye) a sce
 bool vr_immersive(void);                             // the frames are the fight's (the player in the arena)
 bool vr_stereo_frame(void);                          // this frame: both eyes, the headset's views
 void vr_frame_end(void);
+float vr_vignette(void);       // the comfort vignette now (0..1, before the setting's scale)
 uint64_t vr_frame_id(void);  // the frame being translated (frames presented since the start)                             // (present) the frame's kind decided
 void vr_note_scene_target(NvnTexture *t);            // (exec.c) the scene camera drew into t this frame
 

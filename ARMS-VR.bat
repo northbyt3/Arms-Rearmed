@@ -41,6 +41,12 @@ rem HUD panel in fights: distance and width in meters (0 = the HUD drawn into th
 rem set LARECOMP_VR_HUD_DIST=1.6
 rem set LARECOMP_VR_HUD_WIDTH=2.0
 rem set LARECOMP_VR_HUD_PANEL=1
+rem Comfort: vignette while the game camera turns / moves fast (0 = off, 1 = strong; default 0.7)
+rem set LARECOMP_VR_VIGNETTE=0.7
+rem Comfort: the camera's height smoothed so jumps don't lift your head (default 1; 0 = follow the game camera)
+rem set LARECOMP_VR_STABLE_HEIGHT=1
+rem Comfort: seconds of black when switching between the big screen and the arena (default 0.2)
+rem set LARECOMP_VR_BLINK=0.2
 rem Headset refresh rate to ask for (72, 80, 90, 120; default: as set in the Quest's Link settings)
 rem set LARECOMP_VR_HZ=120
 rem Motion punches in fights (on by default): punch forward with a controller to throw that arm, fists up at the
